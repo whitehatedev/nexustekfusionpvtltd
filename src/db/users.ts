@@ -155,6 +155,62 @@ export async function verifyAdminCredentials(email: string, password: string) {
   return user;
 }
 
+export async function verifyUserCredentials(email: string, password: string) {
+  const cleanEmail = email.trim().toLowerCase();
+  if (!cleanEmail || !password) return null;
+
+  const rows = await db
+    .select()
+    .from(users)
+    .where(sql`lower(${users.email}) = ${cleanEmail}`)
+    .limit(1);
+
+  const user = rows[0];
+  if (!user || !user.isActive) {
+    return null;
+  }
+  if (!user.passwordHash || !verifyPassword(password, user.passwordHash)) {
+    return null;
+  }
+  return user;
+}
+
+export async function registerUserWithPassword(input: {
+  email: string;
+  password: string;
+  fullName: string;
+  mobile?: string;
+  companyOrCollege?: string;
+}) {
+  const cleanEmail = input.email.trim().toLowerCase();
+  const existing = await db
+    .select()
+    .from(users)
+    .where(sql`lower(${users.email}) = ${cleanEmail}`)
+    .limit(1);
+
+  if (existing.length > 0) {
+    throw new Error('An account with this email already exists. Please sign in instead.');
+  }
+
+  const role = isBootstrapAdminEmail(cleanEmail) ? 'super_admin' : 'customer';
+  const [inserted] = await db
+    .insert(users)
+    .values({
+      uid: `usr_${crypto.randomBytes(8).toString('hex')}`,
+      email: cleanEmail,
+      fullName: input.fullName.trim(),
+      mobile: (input.mobile || '').trim(),
+      companyOrCollege: (input.companyOrCollege || '').trim(),
+      role,
+      passwordHash: hashPassword(input.password),
+      isActive: true,
+    })
+    .returning();
+
+  return inserted;
+}
+
 export async function createAdminSession(userId: number, userAgent = '') {
   const rawToken = crypto.randomBytes(32).toString('hex');
   const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
@@ -228,19 +284,21 @@ export async function getOrCreateUser(uid: string, email: string, fullName?: str
       return updated;
     }
 
-    // If a pre-provisioned email-based admin exists with matching email, link Firebase UID safely
+    // Link existing account by email when migrating from password/pre-provisioned account to Supabase UID
     if (email) {
       const byEmail = await db
         .select()
         .from(users)
         .where(sql`lower(${users.email}) = ${email.trim().toLowerCase()}`)
         .limit(1);
-      if (byEmail.length > 0 && byEmail[0].uid.startsWith('admin_')) {
+      if (byEmail.length > 0) {
+        const nextRole = shouldBeSuperAdmin && byEmail[0].role === 'customer' ? 'super_admin' : byEmail[0].role;
         const [linked] = await db
           .update(users)
           .set({
             uid,
             fullName: byEmail[0].fullName || fullName || '',
+            role: nextRole,
             updatedAt: new Date(),
           })
           .where(eq(users.id, byEmail[0].id))

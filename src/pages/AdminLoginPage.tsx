@@ -5,7 +5,16 @@ import { usePlatform } from '../context/PlatformContext';
 const COMPANY_LOGO = '/assets/aistudio/image_1a5ac752.png';
 
 export const AdminLoginPage: React.FC = () => {
-  const { isSignedIn, isAdmin, dbUser, signInWithAdminCredentials, signInWithGoogle, navigate, apiFetch } = usePlatform();
+  const {
+    isSignedIn,
+    isAdmin,
+    dbUser,
+    supabaseConfigured,
+    signInWithAdminCredentials,
+    signInWithSupabaseOAuth,
+    navigate,
+    apiFetch,
+  } = usePlatform();
   const [mode, setMode] = useState<'login' | 'forgot' | 'reset'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -122,7 +131,7 @@ export const AdminLoginPage: React.FC = () => {
               </div>
               <p>
                 Configure <code className="font-mono">INITIAL_ADMIN_EMAIL</code> and{' '}
-                <code className="font-mono">INITIAL_ADMIN_PASSWORD</code> in server environment variables, or sign in with Google if your Super Admin email is authorized.
+                <code className="font-mono">INITIAL_ADMIN_PASSWORD</code> in server environment variables{supabaseConfigured ? ', or sign in via Supabase OAuth below' : ''}.
               </p>
             </div>
           )}
@@ -276,23 +285,27 @@ export const AdminLoginPage: React.FC = () => {
             </form>
           )}
 
-          <div className="relative py-1">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-slate-200" />
-            </div>
-            <div className="relative flex justify-center text-[11px] uppercase">
-              <span className="bg-white px-2 text-slate-400 font-medium">Or</span>
-            </div>
-          </div>
+          {supabaseConfigured && (
+            <>
+              <div className="relative py-1">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-slate-200" />
+                </div>
+                <div className="relative flex justify-center text-[11px] uppercase">
+                  <span className="bg-white px-2 text-slate-400 font-medium">Or</span>
+                </div>
+              </div>
 
-          <button
-            type="button"
-            onClick={signInWithGoogle}
-            className="w-full py-2.5 border border-slate-300 hover:bg-slate-50 text-slate-800 text-xs font-semibold rounded-lg inline-flex items-center justify-center gap-2"
-          >
-            <ShieldCheck className="w-4 h-4 text-blue-700" />
-            Continue with Authorized Google Account
-          </button>
+              <button
+                type="button"
+                onClick={signInWithSupabaseOAuth}
+                className="w-full py-2.5 border border-slate-300 hover:bg-slate-50 text-slate-800 text-xs font-semibold rounded-lg inline-flex items-center justify-center gap-2"
+              >
+                <ShieldCheck className="w-4 h-4 text-blue-700" />
+                Continue with Authorized Google Account (Supabase)
+              </button>
+            </>
+          )}
 
           <div className="text-center pt-1">
             <button

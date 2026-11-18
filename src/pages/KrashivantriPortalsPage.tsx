@@ -67,7 +67,7 @@ async function openAuthenticatedFile(
  * FARMER PORTAL (/krashivantri/farmer-portal)
  * ============================================================================ */
 export const FarmerPortalPage: React.FC = () => {
-  const { isSignedIn, signInWithGoogle, dbUser, fbUser, apiFetch, notify, navigate } = usePlatform();
+  const { isSignedIn, openAuthModal, getIdToken, dbUser, apiFetch, notify, navigate } = usePlatform();
   const [tab, setTab] = useState<'overview' | 'farms' | 'book' | 'tracking'>('overview');
   const [loading, setLoading] = useState(true);
 
@@ -220,10 +220,10 @@ export const FarmerPortalPage: React.FC = () => {
           Sign in to register your farmer KYC profile, map your agricultural land on OpenStreetMap, book drone spraying services, and track certified drone pilots live.
         </p>
         <button
-          onClick={signInWithGoogle}
+          onClick={() => openAuthModal('login')}
           className="px-6 py-3 bg-[#0B1B3B] hover:bg-[#132954] text-white text-sm font-semibold rounded-lg"
         >
-          Sign In with Google to Continue
+          Sign In / Register to Continue
         </button>
       </div>
     );
@@ -594,7 +594,7 @@ export const FarmerPortalPage: React.FC = () => {
                                 openAuthenticatedFile(
                                   `/api/krashivantri/files/download?path=${encodeURIComponent(doc.storagePath)}`,
                                   doc.fileName,
-                                  async () => (fbUser ? fbUser.getIdToken() : null),
+                                  getIdToken,
                                   (m) => notify(m, 'error')
                                 )
                               }
@@ -1088,7 +1088,7 @@ export const FarmerPortalPage: React.FC = () => {
                                   openAuthenticatedFile(
                                     `/api/krashivantri/files/download?path=${encodeURIComponent(ev.storagePath)}`,
                                     ev.fileName,
-                                    async () => (fbUser ? fbUser.getIdToken() : null),
+                                    getIdToken,
                                     (m) => notify(m, 'error')
                                   )
                                 }
@@ -1130,7 +1130,7 @@ export const FarmerPortalPage: React.FC = () => {
  * DRONE PILOT PORTAL (/krashivantri/pilot-portal)
  * ============================================================================ */
 export const PilotPortalPage: React.FC = () => {
-  const { isSignedIn, signInWithGoogle, dbUser, fbUser, apiFetch, notify, navigate } = usePlatform();
+  const { isSignedIn, openAuthModal, dbUser, apiFetch, notify, navigate } = usePlatform();
   const [tab, setTab] = useState<'profile' | 'bank' | 'missions' | 'earnings'>('profile');
   const [loading, setLoading] = useState(true);
 
@@ -1306,10 +1306,10 @@ export const PilotPortalPage: React.FC = () => {
           Register your DGCA Remote Pilot Certificate (RPC), agricultural UAV fleet, encrypted payout bank account, and execute verified spraying missions with real GPS telemetry.
         </p>
         <button
-          onClick={signInWithGoogle}
+          onClick={() => openAuthModal('login')}
           className="px-6 py-3 bg-[#0B1B3B] hover:bg-[#132954] text-white text-sm font-semibold rounded-lg"
         >
-          Sign In with Google to Continue
+          Sign In / Register to Continue
         </button>
       </div>
     );

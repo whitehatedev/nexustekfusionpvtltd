@@ -22,6 +22,7 @@ import {
   supportTickets,
 } from '../../db/schema.ts';
 import { ADMIN_ROLES, optionalAuth, AuthRequest } from '../../middleware/auth.ts';
+import { getSupabasePublicConfig } from '../../lib/supabase-admin.ts';
 import { ensureInitialSeed } from '../seed.ts';
 import { createUploadMiddleware, generateCode, isValidIndianPin } from '../utils.ts';
 import { isRazorpayConfigured } from '../razorpay.ts';
@@ -117,6 +118,7 @@ publicRouter.get('/bootstrap', optionalAuth, async (req: AuthRequest, res) => {
       printingMachines: machines,
       publishedPages,
       razorpayConfigured: await isRazorpayConfigured(),
+      supabaseConfig: getSupabasePublicConfig(),
     });
   } catch (error) {
     console.error('Bootstrap error:', error);

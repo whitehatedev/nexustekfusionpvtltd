@@ -12,6 +12,14 @@ const hasDatabaseConfig = Boolean(
     (process.env.SQL_HOST && process.env.SQL_DB_NAME && process.env.SQL_USER)
 );
 
+const useSslForConnectionString = Boolean(
+  process.env.DATABASE_URL &&
+    (process.env.DATABASE_SSL === 'true' ||
+      process.env.DATABASE_URL.includes('supabase.co') ||
+      process.env.DATABASE_URL.includes('supabase.com') ||
+      process.env.DATABASE_URL.includes('sslmode=require'))
+);
+
 export const createPool = () => {
   if (!hasDatabaseConfig) return undefined;
   if (!global._postgresPool) {
@@ -19,6 +27,7 @@ export const createPool = () => {
       process.env.DATABASE_URL
         ? {
             connectionString: process.env.DATABASE_URL,
+            ssl: useSslForConnectionString ? { rejectUnauthorized: false } : undefined,
             max: 10,
             connectionTimeoutMillis: 15000,
           }

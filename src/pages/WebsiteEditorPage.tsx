@@ -87,7 +87,7 @@ export const WebsiteEditorPage: React.FC = () => {
             Admin Login
           </button>
           <button onClick={signInWithGoogle} className="px-5 py-2.5 border border-slate-300 bg-white text-slate-900 rounded-lg text-sm font-semibold">
-            Sign In with Google
+            Account Sign In
           </button>
         </div>
       </div>

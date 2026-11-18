@@ -10,11 +10,10 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
     navigate,
     settings,
     cart,
-    fbUser,
     dbUser,
     isSignedIn,
     isAdmin,
-    signInWithGoogle,
+    openAuthModal,
     apiFetch,
     notify,
     publishedPages,
@@ -197,7 +196,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
             </button>
 
             <button
-              onClick={() => (isSignedIn ? go('/my-account') : signInWithGoogle())}
+              onClick={() => (isSignedIn ? go('/my-account') : openAuthModal('login'))}
               className="hidden sm:inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-700 hover:text-[#0B1B3B] hover:bg-slate-100 rounded-lg transition-colors whitespace-nowrap shrink-0"
             >
               <User className="w-3.5 h-3.5" />
@@ -339,13 +338,13 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
 
               <div className="border-t border-slate-200 pt-4 space-y-2">
                 <button
-                  onClick={() => (isSignedIn ? go('/my-account') : signInWithGoogle())}
+                  onClick={() => (isSignedIn ? go('/my-account') : openAuthModal('login'))}
                   className="w-full py-2.5 px-4 rounded-lg border border-slate-300 text-sm font-medium text-slate-900 hover:bg-slate-50 flex items-center justify-between"
                 >
                   <span>
                     {isSignedIn
-                      ? `My Account (${dbUser?.email || fbUser?.email})`
-                      : 'Customer Sign In (Google)'}
+                      ? `My Account (${dbUser?.email || 'Account'})`
+                      : 'Customer Sign In / Register'}
                   </span>
                   <ArrowRight className="w-4 h-4" />
                 </button>

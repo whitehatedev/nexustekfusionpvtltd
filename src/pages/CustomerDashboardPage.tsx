@@ -70,7 +70,7 @@ function resolveProjectStageIndex(enquiryStatus: string, projectStatus?: string)
 }
 
 export const CustomerDashboardPage: React.FC<{ initialTab?: TabKey }> = ({ initialTab }) => {
-  const { fbUser, dbUser, isSignedIn, signInWithGoogle, signOut, apiFetch, notify, navigate, settings, isAdmin, getIdToken } =
+  const { dbUser, isSignedIn, openAuthModal, signOut, apiFetch, notify, navigate, settings, isAdmin, getIdToken } =
     usePlatform();
   const [tab, setTab] = useState<TabKey>(initialTab || 'overview');
 
@@ -119,13 +119,13 @@ export const CustomerDashboardPage: React.FC<{ initialTab?: TabKey }> = ({ initi
       <div className="max-w-xl mx-auto px-4 py-20 text-center space-y-4">
         <h1 className="font-display text-3xl font-bold text-[#0B1B3B]">Customer Account</h1>
         <p className="text-sm text-slate-600">
-          Sign in with your Google account to manage orders, custom 3D prints, project quotations, invoices, and saved addresses.
+          Sign in or create an account to manage orders, custom 3D prints, project quotations, invoices, and saved addresses.
         </p>
         <button
-          onClick={signInWithGoogle}
+          onClick={() => openAuthModal('login')}
           className="px-6 py-3 bg-blue-700 hover:bg-blue-800 text-white text-sm font-semibold rounded-lg"
         >
-          Sign In with Google
+          Sign In / Create Account
         </button>
       </div>
     );
@@ -244,10 +244,10 @@ export const CustomerDashboardPage: React.FC<{ initialTab?: TabKey }> = ({ initi
         <div>
           <div className="text-xs font-semibold text-blue-700">Customer Portal</div>
           <h1 className="font-display text-3xl font-bold text-[#0B1B3B]">
-            {dbUser?.fullName || fbUser?.email || 'Account'}
+            {dbUser?.fullName || dbUser?.email || 'Account'}
           </h1>
           <div className="text-xs text-slate-500 font-mono">
-            {dbUser?.email || fbUser?.email} · Role: {dbUser?.role || 'customer'}
+            {dbUser?.email} · Role: {dbUser?.role || 'customer'}
           </div>
         </div>
         <div className="flex items-center gap-3">
@@ -482,7 +482,7 @@ export const CustomerDashboardPage: React.FC<{ initialTab?: TabKey }> = ({ initi
                     const payMilestones = (data.paymentMilestones || []).filter(
                       (m: any) => m.projectId === p.id || (p.quotationId && m.quotationId === p.quotationId)
                     );
-                    const customerEmail = dbUser?.email || fbUser?.email || '';
+                    const customerEmail = dbUser?.email || '';
 
                     return (
                       <div key={p.id} className="rounded-xl border border-slate-200 bg-white p-6 space-y-5">
@@ -1162,7 +1162,7 @@ export const CustomerDashboardPage: React.FC<{ initialTab?: TabKey }> = ({ initi
                                 paymentStage: rcp.paymentStage,
                                 amountInr: rcp.amountInr,
                                 issuedAt: rcp.issuedAt,
-                                customerEmail: dbUser?.email || fbUser?.email || '',
+                                customerEmail: dbUser?.email || '',
                                 referenceCode: rcp.payload?.projectCode || rcp.paymentRef,
                               })
                             }
@@ -1195,7 +1195,7 @@ export const CustomerDashboardPage: React.FC<{ initialTab?: TabKey }> = ({ initi
                               amountInr: inv.amountInr,
                               gstInr: inv.gstInr,
                               issuedAt: inv.issuedAt,
-                              customerEmail: dbUser?.email || fbUser?.email || '',
+                              customerEmail: dbUser?.email || '',
                               gstin:
                                 settings.projectSettings?.enableGstTax && settings.companyInfo?.gstin
                                   ? settings.companyInfo.gstin

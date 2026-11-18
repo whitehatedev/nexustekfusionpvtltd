@@ -611,7 +611,7 @@ export const Printing3DPage: React.FC = () => {
                 onClick={signInWithGoogle}
                 className="px-5 py-2.5 bg-slate-900 text-white text-sm font-semibold rounded-lg"
               >
-                Sign In with Google
+                Sign In / Create Account
               </button>
             </div>
           )}

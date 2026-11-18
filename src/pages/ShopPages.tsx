@@ -1708,7 +1708,7 @@ export const CheckoutPage: React.FC = () => {
         <div className="rounded-xl border border-slate-200 bg-white p-8 text-center space-y-3">
           <p className="text-sm text-slate-600">Sign in to use saved addresses, place your order, and track delivery.</p>
           <button onClick={signInWithGoogle} className="px-5 py-2.5 bg-[#0B1B3B] text-white text-sm font-semibold rounded-lg">
-            Sign In with Google
+            Sign In / Create Account
           </button>
         </div>
       ) : (

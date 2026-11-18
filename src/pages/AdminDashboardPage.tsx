@@ -259,11 +259,11 @@ const EMPTY_PRODUCT: EmptyProductDraft = {
 
 export const AdminDashboardPage: React.FC<{ initialTab?: AdminTab }> = ({ initialTab }) => {
   const {
-    fbUser,
     dbUser,
     isSignedIn,
     isAdmin,
-    signInWithGoogle,
+    openAuthModal,
+    getIdToken,
     signOut,
     apiFetch,
     notify,
@@ -543,10 +543,10 @@ export const AdminDashboardPage: React.FC<{ initialTab?: AdminTab }> = ({ initia
             Admin Credential Login
           </button>
           <button
-            onClick={signInWithGoogle}
+            onClick={() => openAuthModal('login')}
             className="px-6 py-3 border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 rounded-lg text-sm font-semibold"
           >
-            Sign In with Google
+            Customer / Supabase Sign In
           </button>
         </div>
       </div>
@@ -575,8 +575,8 @@ export const AdminDashboardPage: React.FC<{ initialTab?: AdminTab }> = ({ initia
   const downloadAuthorizedCsv = async (url: string, filename: string) => {
     try {
       const headers = new Headers();
-      if (fbUser) {
-        const token = await fbUser.getIdToken();
+      const token = await getIdToken();
+      if (token) {
         headers.set('Authorization', `Bearer ${token}`);
       }
       const resp = await fetch(url, { headers, credentials: 'same-origin' });

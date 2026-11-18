@@ -4,21 +4,155 @@ import {
   deleteAdminSession,
   ensureInitialAdminUser,
   getAdminSetupStatus,
+  registerUserWithPassword,
   updateUserPassword,
   verifyAdminCredentials,
+  verifyUserCredentials,
 } from '../../db/users.ts';
 import {
   ADMIN_SESSION_COOKIE,
   AuthRequest,
   requireAdmin,
   requireAuth,
+  USER_SESSION_COOKIE,
 } from '../../middleware/auth.ts';
 import { logAudit, parseCookies, verifyPassword } from '../utils.ts';
 import { db } from '../../db/index.ts';
 import { users } from '../../db/schema.ts';
 import { eq } from 'drizzle-orm';
 
+function isHttpsRequest(req: { secure?: boolean; headers: Record<string, any> }): boolean {
+  const proto = String(req.headers['x-forwarded-proto'] || '').toLowerCase();
+  return Boolean(req.secure || proto === 'https' || (process.env.APP_URL || '').startsWith('https://'));
+}
+
+function buildCookieOptions(req: { secure?: boolean; headers: Record<string, any> }, expires?: Date) {
+  const isHttps = isHttpsRequest(req);
+  return {
+    httpOnly: true,
+    sameSite: (isHttps ? 'none' : 'lax') as 'none' | 'lax',
+    secure: isHttps,
+    path: '/',
+    ...(expires ? { expires } : {}),
+  };
+}
+
 export const authRouter = Router();
+
+authRouter.post('/register', async (req, res) => {
+  try {
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const password = String(req.body.password || '');
+    const fullName = String(req.body.fullName || '').trim();
+    const mobile = String(req.body.mobile || '').trim();
+    const companyOrCollege = String(req.body.companyOrCollege || '').trim();
+
+    if (!email || !email.includes('@')) {
+      return res.status(400).json({ error: 'Valid email address is required.' });
+    }
+    if (!fullName) {
+      return res.status(400).json({ error: 'Full name is required.' });
+    }
+    if (password.length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters long.' });
+    }
+
+    const user = await registerUserWithPassword({
+      email,
+      password,
+      fullName,
+      mobile,
+      companyOrCollege,
+    });
+
+    const ua = String(req.headers['user-agent'] || '');
+    const session = await createAdminSession(user.id, ua);
+
+    res.cookie(USER_SESSION_COOKIE, session.cookieValue, buildCookieOptions(req, session.expiresAt));
+
+    await logAudit({
+      actorUid: user.uid,
+      actorEmail: user.email,
+      action: 'USER_REGISTERED',
+      entityType: 'user',
+      entityId: user.id,
+      details: { role: user.role },
+    });
+
+    res.json({
+      sessionToken: session.cookieValue,
+      user: {
+        id: user.id,
+        uid: user.uid,
+        email: user.email,
+        fullName: user.fullName,
+        mobile: user.mobile,
+        companyOrCollege: user.companyOrCollege,
+        role: user.role,
+        isActive: user.isActive,
+      },
+    });
+  } catch (error: any) {
+    res.status(400).json({ error: error?.message || 'Registration failed.' });
+  }
+});
+
+authRouter.post('/login', async (req, res) => {
+  try {
+    await ensureInitialAdminUser();
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const password = String(req.body.password || '');
+
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required.' });
+    }
+
+    const user = await verifyUserCredentials(email, password);
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid email or password.' });
+    }
+
+    const ua = String(req.headers['user-agent'] || '');
+    const session = await createAdminSession(user.id, ua);
+
+    res.cookie(USER_SESSION_COOKIE, session.cookieValue, buildCookieOptions(req, session.expiresAt));
+
+    res.json({
+      sessionToken: session.cookieValue,
+      user: {
+        id: user.id,
+        uid: user.uid,
+        email: user.email,
+        fullName: user.fullName,
+        mobile: user.mobile,
+        companyOrCollege: user.companyOrCollege,
+        role: user.role,
+        isActive: user.isActive,
+      },
+    });
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ error: 'Unable to sign in right now.' });
+  }
+});
+
+authRouter.post('/logout', async (req, res) => {
+  try {
+    const cookies = parseCookies(req.headers.cookie);
+    if (cookies[USER_SESSION_COOKIE]) await deleteAdminSession(cookies[USER_SESSION_COOKIE]);
+    if (cookies[ADMIN_SESSION_COOKIE]) await deleteAdminSession(cookies[ADMIN_SESSION_COOKIE]);
+    const authHeader = req.headers.authorization;
+    if (authHeader?.startsWith('Bearer ')) {
+      await deleteAdminSession(authHeader.split('Bearer ')[1]);
+    }
+  } catch {
+    // ignore
+  }
+  const clearOpts = buildCookieOptions(req);
+  res.clearCookie(USER_SESSION_COOKIE, clearOpts);
+  res.clearCookie(ADMIN_SESSION_COOKIE, clearOpts);
+  res.json({ ok: true });
+});
 
 authRouter.get('/admin-setup-status', async (_req, res) => {
   try {
@@ -55,13 +189,7 @@ authRouter.post('/admin-login', async (req, res) => {
     const ua = String(req.headers['user-agent'] || '');
     const session = await createAdminSession(user.id, ua);
 
-    res.cookie(ADMIN_SESSION_COOKIE, session.cookieValue, {
-      httpOnly: true,
-      sameSite: 'lax',
-      secure: process.env.NODE_ENV === 'production',
-      path: '/',
-      expires: session.expiresAt,
-    });
+    res.cookie(ADMIN_SESSION_COOKIE, session.cookieValue, buildCookieOptions(req, session.expiresAt));
 
     await logAudit({
       actorUid: user.uid,
@@ -73,6 +201,7 @@ authRouter.post('/admin-login', async (req, res) => {
     });
 
     res.json({
+      sessionToken: session.cookieValue,
       user: {
         id: user.id,
         uid: user.uid,
@@ -97,12 +226,20 @@ authRouter.post('/admin-logout', async (req, res) => {
     if (token) {
       await deleteAdminSession(token);
     }
-    res.clearCookie(ADMIN_SESSION_COOKIE, { path: '/' });
-    res.json({ ok: true });
+    if (cookies[USER_SESSION_COOKIE]) {
+      await deleteAdminSession(cookies[USER_SESSION_COOKIE]);
+    }
+    const authHeader = req.headers.authorization;
+    if (authHeader?.startsWith('Bearer ')) {
+      await deleteAdminSession(authHeader.split('Bearer ')[1]);
+    }
   } catch {
-    res.clearCookie(ADMIN_SESSION_COOKIE, { path: '/' });
-    res.json({ ok: true });
+    // ignore
   }
+  const clearOpts = buildCookieOptions(req);
+  res.clearCookie(ADMIN_SESSION_COOKIE, clearOpts);
+  res.clearCookie(USER_SESSION_COOKIE, clearOpts);
+  res.json({ ok: true });
 });
 
 authRouter.post('/admin-change-password', requireAuth, requireAdmin(), async (req: AuthRequest, res) => {

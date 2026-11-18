@@ -1,6 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { DecodedIdToken } from 'firebase-admin/auth';
-import { adminAuth } from '../lib/firebase-admin.ts';
+import { verifySupabaseAccessToken } from '../lib/supabase-admin.ts';
 import {
   ADMIN_ROLES_SET,
   getOrCreateUser,
@@ -9,6 +8,7 @@ import {
 import { parseCookies } from '../server/utils.ts';
 
 export const ADMIN_SESSION_COOKIE = 'ntf_admin_session';
+export const USER_SESSION_COOKIE = 'ntf_session';
 
 export const ADMIN_ROLES = ADMIN_ROLES_SET;
 
@@ -23,36 +23,58 @@ export interface DbUser {
   isActive?: boolean;
 }
 
+export interface AuthUserClaims {
+  uid: string;
+  email?: string;
+  name?: string;
+}
+
 export interface AuthRequest extends Request {
-  user?: DecodedIdToken;
+  user?: AuthUserClaims;
   dbUser?: DbUser;
 }
 
-async function resolveUserFromRequest(req: Request): Promise<{ dbUser: DbUser; firebaseUser?: DecodedIdToken } | null> {
-  // 1. Check signed HTTP-only Admin Session cookie first
+async function resolveUserFromRequest(
+  req: Request
+): Promise<{ dbUser: DbUser; authUser?: AuthUserClaims } | null> {
+  // 1. Check signed HTTP-only Admin or User Session cookie
   const cookies = parseCookies(req.headers.cookie);
-  const sessionToken = cookies[ADMIN_SESSION_COOKIE];
+  const sessionToken = cookies[ADMIN_SESSION_COOKIE] || cookies[USER_SESSION_COOKIE];
   if (sessionToken) {
     const cookieUser = await getUserBySessionToken(sessionToken);
     if (cookieUser && cookieUser.isActive !== false) {
-      return { dbUser: cookieUser };
+      return {
+        dbUser: cookieUser,
+        authUser: { uid: cookieUser.uid, email: cookieUser.email, name: cookieUser.fullName },
+      };
     }
   }
 
-  // 2. Fall back to Firebase ID Token Bearer header
+  // 2. Fall back to Bearer header (signed session token or Supabase Access Token)
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
     const token = authHeader.split('Bearer ')[1];
-    const decodedToken = await adminAuth.verifyIdToken(token);
-    const dbUser = await getOrCreateUser(
-      decodedToken.uid,
-      decodedToken.email || '',
-      decodedToken.name || ''
-    );
+
+    const sessionUser = await getUserBySessionToken(token);
+    if (sessionUser && sessionUser.isActive !== false) {
+      return {
+        dbUser: sessionUser,
+        authUser: { uid: sessionUser.uid, email: sessionUser.email, name: sessionUser.fullName },
+      };
+    }
+
+    const verified = await verifySupabaseAccessToken(token);
+    if (!verified) {
+      throw new Error('Invalid or expired authentication token.');
+    }
+    const dbUser = await getOrCreateUser(verified.uid, verified.email, verified.fullName);
     if (dbUser.isActive === false) {
       throw new Error('Account is disabled.');
     }
-    return { dbUser, firebaseUser: decodedToken };
+    return {
+      dbUser,
+      authUser: { uid: verified.uid, email: verified.email, name: verified.fullName },
+    };
   }
 
   return null;
@@ -64,7 +86,7 @@ export const requireAuth = async (req: AuthRequest, res: Response, next: NextFun
     if (!resolved) {
       return res.status(401).json({ error: 'Authentication required. Please sign in.' });
     }
-    req.user = resolved.firebaseUser;
+    req.user = resolved.authUser;
     req.dbUser = resolved.dbUser;
     next();
   } catch (error: any) {
@@ -77,7 +99,7 @@ export const optionalAuth = async (req: AuthRequest, _res: Response, next: NextF
   try {
     const resolved = await resolveUserFromRequest(req);
     if (resolved) {
-      req.user = resolved.firebaseUser;
+      req.user = resolved.authUser;
       req.dbUser = resolved.dbUser;
     }
   } catch {

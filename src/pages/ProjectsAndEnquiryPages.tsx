@@ -371,7 +371,7 @@ export const ProjectEnquiryPage: React.FC = () => {
             onClick={signInWithGoogle}
             className="px-6 py-3 bg-blue-700 hover:bg-blue-800 text-white text-sm font-semibold rounded-lg"
           >
-            Sign In with Google
+            Sign In / Create Account
           </button>
         </div>
       ) : submittedCode ? (

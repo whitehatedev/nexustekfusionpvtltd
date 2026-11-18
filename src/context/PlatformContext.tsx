@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import { onAuthStateChanged, signInWithPopup, signOut as fbSignOut, User } from 'firebase/auth';
-import { auth, googleAuthProvider } from '../lib/firebase';
+import { getSupabaseClient, initSupabaseClient, isSupabaseConfigured } from '../lib/supabase';
+import { AuthModal } from '../components/AuthModal';
 import {
   BlogPost,
   Brand,
@@ -42,15 +42,27 @@ interface PublishedPageSummary {
   status: string;
 }
 
+interface RegisterPayload {
+  fullName: string;
+  email: string;
+  mobile: string;
+  companyOrCollege: string;
+  password: string;
+}
+
 interface PlatformContextValue {
   path: string;
   navigate: (to: string) => void;
-  fbUser: User | null;
   dbUser: DbUser | null;
   isSignedIn: boolean;
   authLoading: boolean;
   isAdmin: boolean;
+  supabaseConfigured: boolean;
+  openAuthModal: (mode?: 'login' | 'register') => void;
   signInWithGoogle: () => Promise<void>;
+  signInWithSupabaseOAuth: () => Promise<void>;
+  signInWithEmail: (email: string, password: string) => Promise<DbUser>;
+  registerWithEmail: (payload: RegisterPayload) => Promise<DbUser>;
   signInWithAdminCredentials: (email: string, password: string) => Promise<DbUser>;
   signOut: () => Promise<void>;
   apiFetch: <T = any>(url: string, options?: RequestInit) => Promise<T>;
@@ -81,9 +93,12 @@ const PlatformContext = createContext<PlatformContextValue | null>(null);
 
 export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [path, setPath] = useState<string>(() => window.location.pathname || '/');
-  const [fbUser, setFbUser] = useState<User | null>(null);
   const [dbUser, setDbUser] = useState<DbUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [supabaseConfigured, setSupabaseConfigured] = useState<boolean>(() => isSupabaseConfigured());
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authModalMode, setAuthModalMode] = useState<'login' | 'register'>('login');
+  const [oauthRedirectUrl, setOauthRedirectUrl] = useState<string | null>(null);
 
   const [settings, setSettings] = useState<SiteSettings>({});
   const [previewDraft, setPreviewDraft] = useState(false);
@@ -101,6 +116,19 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const [cart, setCart] = useState<CartItem[]>([]);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const sessionTokenRef = React.useRef<string | null>(
+    typeof window !== 'undefined' ? window.sessionStorage.getItem('ntf_session_token') : null
+  );
+
+  const persistSessionToken = useCallback((token: string | null) => {
+    sessionTokenRef.current = token;
+    try {
+      if (token) window.sessionStorage.setItem('ntf_session_token', token);
+      else window.sessionStorage.removeItem('ntf_session_token');
+    } catch {
+      // ignore storage errors
+    }
+  }, []);
 
   const notify = useCallback((message: string, tone: 'success' | 'error' | 'info' = 'info') => {
     const id = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
@@ -123,22 +151,45 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     return () => window.removeEventListener('popstate', onPop);
   }, []);
 
-  const apiFetch = useCallback(async <T = any>(url: string, options: RequestInit = {}): Promise<T> => {
-    const headers = new Headers(options.headers || {});
-    if (auth.currentUser) {
-      const token = await auth.currentUser.getIdToken();
-      headers.set('Authorization', `Bearer ${token}`);
+  const getIdToken = useCallback(async (): Promise<string | null> => {
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      const { data } = await supabase.auth.getSession();
+      if (data.session?.access_token) return data.session.access_token;
     }
-    if (!(options.body instanceof FormData) && !headers.has('Content-Type')) {
-      headers.set('Content-Type', 'application/json');
-    }
-    const res = await fetch(url, { ...options, headers, credentials: 'same-origin' });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      throw new Error(data.error || `Request failed (${res.status})`);
-    }
-    return data as T;
+    return sessionTokenRef.current;
   }, []);
+
+  const apiFetch = useCallback(
+    async <T = any>(url: string, options: RequestInit = {}): Promise<T> => {
+      const headers = new Headers(options.headers || {});
+      const token = await getIdToken();
+      if (token) {
+        headers.set('Authorization', `Bearer ${token}`);
+      }
+      if (!(options.body instanceof FormData) && !headers.has('Content-Type')) {
+        headers.set('Content-Type', 'application/json');
+      }
+      const res = await fetch(url, { ...options, headers, credentials: 'same-origin' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || `Request failed (${res.status})`);
+      }
+      return data as T;
+    },
+    [getIdToken]
+  );
+
+  const syncMe = useCallback(async () => {
+    try {
+      const data = await apiFetch<{ user: DbUser }>('/api/me');
+      setDbUser(data.user);
+    } catch {
+      setDbUser(null);
+    } finally {
+      setAuthLoading(false);
+    }
+  }, [apiFetch]);
 
   const refreshBootstrap = useCallback(async () => {
     try {
@@ -157,6 +208,11 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       setPrintingMachines(data.printingMachines || []);
       setPublishedPages(data.publishedPages || []);
       setRazorpayConfigured(Boolean(data.razorpayConfigured));
+
+      if (data.supabaseConfig?.url && data.supabaseConfig?.anonKey) {
+        initSupabaseClient(data.supabaseConfig.url, data.supabaseConfig.anonKey);
+        setSupabaseConfigured(true);
+      }
     } catch (err) {
       console.error('Bootstrap fetch failed:', err);
     }
@@ -167,59 +223,127 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, [refreshBootstrap]);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (user) => {
-      setFbUser(user);
-      try {
-        // Sync either via Firebase token (if signed in with Google) or HTTP-only admin cookie session
-        const data = await apiFetch<{ user: DbUser }>('/api/me');
-        setDbUser(data.user);
-        if (new URLSearchParams(window.location.search).get('previewDraft') === 'true') {
-          refreshBootstrap();
-        }
-      } catch {
-        setDbUser(null);
-      } finally {
-        setAuthLoading(false);
-      }
-    });
-    return () => unsub();
-  }, [apiFetch, refreshBootstrap]);
+    syncMe();
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
 
-  const signInWithGoogle = useCallback(async () => {
-    try {
-      await signInWithPopup(auth, googleAuthProvider);
-      notify('Signed in successfully.', 'success');
-    } catch (err: any) {
-      notify(err?.message || 'Google sign-in cancelled or failed.', 'error');
+    const { data: listener } = supabase.auth.onAuthStateChange(async () => {
+      await syncMe();
+    });
+    return () => {
+      listener.subscription.unsubscribe();
+    };
+  }, [syncMe, supabaseConfigured]);
+
+  const openAuthModal = useCallback((mode: 'login' | 'register' = 'login') => {
+    setAuthModalMode(mode);
+    setOauthRedirectUrl(null);
+    setAuthModalOpen(true);
+  }, []);
+
+  const signInWithSupabaseOAuth = useCallback(async () => {
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      notify('Supabase Auth OAuth is not configured on the server; sign in with email and password.', 'info');
+      setAuthModalOpen(true);
+      return;
+    }
+    const isIframe = typeof window !== 'undefined' && window.self !== window.top;
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: `${window.location.origin}${window.location.pathname}`,
+        skipBrowserRedirect: isIframe,
+      },
+    });
+    if (error) {
+      notify(error.message || 'Supabase Google sign-in failed.', 'error');
+      return;
+    }
+    if (isIframe && data?.url) {
+      setOauthRedirectUrl(data.url);
+      setAuthModalOpen(true);
     }
   }, [notify]);
 
+  const signInWithGoogle = useCallback(async () => {
+    openAuthModal('login');
+  }, [openAuthModal]);
+
+  const signInWithEmail = useCallback(
+    async (email: string, password: string) => {
+      try {
+        const res = await apiFetch<{ user: DbUser; sessionToken?: string }>('/api/auth/login', {
+          method: 'POST',
+          body: JSON.stringify({ email, password }),
+        });
+        if (res.sessionToken) persistSessionToken(res.sessionToken);
+        setDbUser(res.user);
+        await refreshBootstrap();
+        notify(`Signed in as ${res.user.fullName || res.user.email}.`, 'success');
+        return res.user;
+      } catch (localErr: any) {
+        const supabase = getSupabaseClient();
+        if (supabase) {
+          const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+          if (!error && data.session) {
+            const me = await apiFetch<{ user: DbUser }>('/api/me');
+            setDbUser(me.user);
+            await refreshBootstrap();
+            notify(`Signed in as ${me.user.fullName || me.user.email}.`, 'success');
+            return me.user;
+          }
+        }
+        throw localErr;
+      }
+    },
+    [apiFetch, notify, persistSessionToken, refreshBootstrap]
+  );
+
+  const registerWithEmail = useCallback(
+    async (payload: RegisterPayload) => {
+      const res = await apiFetch<{ user: DbUser; sessionToken?: string }>('/api/auth/register', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      if (res.sessionToken) persistSessionToken(res.sessionToken);
+      setDbUser(res.user);
+      await refreshBootstrap();
+      notify(`Welcome, ${res.user.fullName || res.user.email}!`, 'success');
+      return res.user;
+    },
+    [apiFetch, notify, persistSessionToken, refreshBootstrap]
+  );
+
   const signInWithAdminCredentials = useCallback(
     async (email: string, password: string) => {
-      const res = await apiFetch<{ user: DbUser }>('/api/auth/admin-login', {
+      const res = await apiFetch<{ user: DbUser; sessionToken?: string }>('/api/auth/admin-login', {
         method: 'POST',
         body: JSON.stringify({ email, password }),
       });
+      if (res.sessionToken) persistSessionToken(res.sessionToken);
       setDbUser(res.user);
       await refreshBootstrap();
       notify(`Signed in as ${res.user.fullName || res.user.email}.`, 'success');
       return res.user;
     },
-    [apiFetch, notify, refreshBootstrap]
+    [apiFetch, notify, persistSessionToken, refreshBootstrap]
   );
 
   const signOut = useCallback(async () => {
     try {
-      await apiFetch('/api/auth/admin-logout', { method: 'POST' });
+      await apiFetch('/api/auth/logout', { method: 'POST' });
     } catch {
       // ignore
     }
-    if (auth.currentUser) {
-      await fbSignOut(auth);
+    persistSessionToken(null);
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      await supabase.auth.signOut().catch(() => {});
     }
     setDbUser(null);
     notify('Signed out.', 'info');
-  }, [apiFetch, notify]);
+  }, [apiFetch, notify, persistSessionToken]);
 
   const addToCart = useCallback(
     (product: Product, qty = 1, variant?: string, color?: string) => {
@@ -266,21 +390,24 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const clearCart = useCallback(() => setCart([]), []);
 
-  const isSignedIn = Boolean(fbUser || dbUser);
+  const isSignedIn = Boolean(dbUser);
   const isAdmin = Boolean(dbUser && ADMIN_ROLES.has(dbUser.role));
-  const getIdToken = useCallback(async () => (auth.currentUser ? auth.currentUser.getIdToken() : null), []);
 
   return (
     <PlatformContext.Provider
       value={{
         path,
         navigate,
-        fbUser,
         dbUser,
         isSignedIn,
         authLoading,
         isAdmin,
+        supabaseConfigured,
+        openAuthModal,
         signInWithGoogle,
+        signInWithSupabaseOAuth,
+        signInWithEmail,
+        registerWithEmail,
         signInWithAdminCredentials,
         signOut,
         apiFetch,
@@ -308,6 +435,23 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       }}
     >
       {children}
+      <AuthModal
+        open={authModalOpen}
+        initialMode={authModalMode}
+        supabaseConfigured={supabaseConfigured}
+        oauthRedirectUrl={oauthRedirectUrl}
+        onClose={() => {
+          setAuthModalOpen(false);
+          setOauthRedirectUrl(null);
+        }}
+        onLogin={async (em, pw) => {
+          await signInWithEmail(em, pw);
+        }}
+        onRegister={async (payload) => {
+          await registerWithEmail(payload);
+        }}
+        onSupabaseOAuth={signInWithSupabaseOAuth}
+      />
       <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-sm pointer-events-none">
         {toasts.map((t) => (
           <div

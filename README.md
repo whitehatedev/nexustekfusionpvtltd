@@ -19,7 +19,7 @@ Official full-stack web platform for **NEXUSTEKFUSION PRIVATE LIMITED** (`https:
   - **Module 1 (Project Advance/Final Payment, Clearance & Handover):** Configurable 50%/50% payment split, per-project milestones, official receipts (`NTF-RCP-`), work orders (`NTF-WRK-`), clearance certificates (`NTF-CLR-`), completion certificates (`NTF-CMP-`), time-limited token-gated deliverable downloads, courier dispatch records, Super Admin audited handover exceptions, and configurable lifecycle email templates (`src/server/email.ts`).
   - **Module 2 (KRASHIVANTRI Farmer & Drone Pilot Operations):** Farmer KYC & polygon farm plots (`/krashivantri/farmer-portal`), DGCA Remote Pilot Certificate (RPC) verification & AES-256-GCM encrypted payout bank details (`/krashivantri/pilot-portal`), browser-authenticated live GPS telemetry with real staleness checks, geofenced spraying sessions & photo/video evidence, Razorpay booking collections & refunds, verified pilot earnings ledger & UTR-gated payouts, penalties & appeals, plus Admin operational consoles (`/admin/farmers`, `/admin/drone-pilots`, `/admin/live-tracking`, `/admin/orders/live`, `/admin/farmer-payments`, `/admin/pilot-payouts`, `/admin/penalties`, `/admin/finance`).
   - **Drone Repair Service:** Dedicated UAV repair & field diagnostics booking portal (`/services/drone-repair`).
-- **Authentication:** Dual Firebase Google Sign-In + HTTP-only signed session authentication (`/admin/login`) with salted `scrypt` password hashing, admin password reset tokens (`src/db/users.ts`, `src/middleware/auth.ts`), and 9-role RBAC.
+- **Authentication:** Supabase Auth (Email/Password & Google OAuth) + HTTP-only signed session authentication with salted `scrypt` password hashing, admin password reset tokens (`src/db/users.ts`, `src/middleware/auth.ts`), and 9-role RBAC.
 - **3D Slicing Engine:** Real server-side binary/ASCII STL & OBJ mesh geometry analyzer (`src/server/slicer.ts`) calculating bounding box (`X × Y × Z`), exact mesh volume (`cm³`), surface area (`cm²`), overhang ratio, support volume estimation, layer count, filament weight, print duration, and dynamic material/printer/infill pricing.
 - **Payments:** Razorpay Orders API + HMAC-SHA256 signature verification & idempotent webhook handling (`src/server/razorpay.ts`), with an explicitly labeled **Sandbox Test Mode** when live Razorpay credentials are not configured.
 
@@ -29,8 +29,7 @@ Official full-stack web platform for **NEXUSTEKFUSION PRIVATE LIMITED** (`https:
 
 ### 1. Prerequisites
 - **Node.js 20+** and **npm 10+**
-- **PostgreSQL 15+** (or Cloud SQL PostgreSQL connection)
-- **Firebase Project** (with Google Authentication enabled and `firebase-applet-config.json` in the project root)
+- **Supabase Project** (PostgreSQL connection string `DATABASE_URL`, `SUPABASE_URL`, and `SUPABASE_ANON_KEY`)
 
 ### 2. Install Dependencies
 ```bash
@@ -44,11 +43,11 @@ Copy `.env.example` to `.env` and populate your credentials:
 Copy-Item .env.example .env
 ```
 
-Required database variables (`src/db/index.ts`):
-- `SQL_HOST` (e.g. `127.0.0.1`)
-- `SQL_USER`
-- `SQL_PASSWORD`
-- `SQL_DB_NAME`
+Required Supabase & database variables (`src/db/index.ts`, `src/lib/supabase-admin.ts`):
+- `DATABASE_URL` (your Supabase PostgreSQL connection URI)
+- `SUPABASE_URL` / `VITE_SUPABASE_URL`
+- `SUPABASE_ANON_KEY` / `VITE_SUPABASE_ANON_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY` (optional, server-only)
 
 Optional payment, email & admin variables:
 - `INITIAL_ADMIN_NAME`, `INITIAL_ADMIN_EMAIL`, `INITIAL_ADMIN_PASSWORD` (seeds initial password-authenticated Super Admin on startup)

@@ -194,6 +194,10 @@ function resolveColumnValue(ctx: EvalContext, tableName: string | null, colSqlNa
 
 function toComparable(val: any): any {
   if (val instanceof Date) return val.getTime();
+  if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(val)) {
+    const parsed = Date.parse(val);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
   return val;
 }
 
