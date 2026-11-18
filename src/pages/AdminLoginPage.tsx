@@ -6,8 +6,12 @@ const COMPANY_LOGO = '/assets/aistudio/image_1a5ac752.png';
 
 export const AdminLoginPage: React.FC = () => {
   const { isSignedIn, isAdmin, dbUser, signInWithAdminCredentials, signInWithGoogle, navigate, apiFetch } = usePlatform();
+  const [mode, setMode] = useState<'login' | 'forgot' | 'reset'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [resetToken, setResetToken] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [infoMsg, setInfoMsg] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [setupStatus, setSetupStatus] = useState<{ configured: boolean; initialAdminEmail?: string | null } | null>(null);
@@ -27,12 +31,58 @@ export const AdminLoginPage: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setInfoMsg('');
     setBusy(true);
     try {
       await signInWithAdminCredentials(email.trim(), password);
       navigate('/admin/dashboard');
     } catch (err: any) {
       setError(err?.message || 'Invalid administrator credentials.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleRequestReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setInfoMsg('');
+    setBusy(true);
+    try {
+      const res = await apiFetch<{ message?: string }>('/api/auth/admin-forgot-password', {
+        method: 'POST',
+        body: JSON.stringify({ email: email.trim() }),
+      });
+      setInfoMsg(res.message || 'If the admin email exists, a reset token has been dispatched.');
+      setMode('reset');
+    } catch (err: any) {
+      setError(err?.message || 'Failed to initiate password reset.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleConfirmReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setInfoMsg('');
+    setBusy(true);
+    try {
+      await apiFetch('/api/auth/admin-reset-password', {
+        method: 'POST',
+        body: JSON.stringify({
+          email: email.trim(),
+          token: resetToken.trim(),
+          newPassword,
+        }),
+      });
+      setInfoMsg('Admin password updated. Sign in below with your new password.');
+      setPassword('');
+      setResetToken('');
+      setNewPassword('');
+      setMode('login');
+    } catch (err: any) {
+      setError(err?.message || 'Invalid or expired reset token.');
     } finally {
       setBusy(false);
     }
@@ -83,43 +133,148 @@ export const AdminLoginPage: React.FC = () => {
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-1.5">
-              <label className="block text-xs font-semibold text-slate-700">Administrator Email</label>
+          {infoMsg && (
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs font-medium text-emerald-900">
+              {infoMsg}
+            </div>
+          )}
+
+          {mode === 'login' && (
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="block text-xs font-semibold text-slate-700">Administrator Email</label>
+                <input
+                  type="email"
+                  required
+                  autoComplete="email"
+                  placeholder="admin@nexustekfusion.in"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 px-3.5 py-2.5 text-sm focus:border-blue-700 focus:outline-none"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-semibold text-slate-700">Password</label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setError('');
+                      setInfoMsg('');
+                      setMode('forgot');
+                    }}
+                    className="text-[11px] font-semibold text-blue-700 hover:underline"
+                  >
+                    Forgot Password?
+                  </button>
+                </div>
+                <input
+                  type="password"
+                  required
+                  autoComplete="current-password"
+                  placeholder="Enter admin password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 px-3.5 py-2.5 text-sm focus:border-blue-700 focus:outline-none"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={busy}
+                className="w-full py-3 bg-[#0B1B3B] hover:bg-[#132954] text-white text-sm font-semibold rounded-lg inline-flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                <Lock className="w-4 h-4" />
+                {busy ? 'Verifying Credentials...' : 'Sign In to Admin Dashboard'}
+                <ArrowRight className="w-4 h-4" />
+              </button>
+            </form>
+          )}
+
+          {mode === 'forgot' && (
+            <form onSubmit={handleRequestReset} className="space-y-4">
+              <div className="text-xs text-slate-600">
+                Enter your administrator email address. A one-time password reset token will be generated and emailed (when configured).
+              </div>
               <input
                 type="email"
                 required
-                autoComplete="email"
                 placeholder="admin@nexustekfusion.in"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 px-3.5 py-2.5 text-sm focus:border-blue-700 focus:outline-none"
+                className="w-full rounded-lg border border-slate-300 px-3.5 py-2.5 text-sm"
               />
-            </div>
+              <div className="flex gap-2">
+                <button
+                  type="submit"
+                  disabled={busy}
+                  className="flex-1 py-2.5 bg-[#0B1B3B] text-white text-xs font-semibold rounded-lg disabled:opacity-50"
+                >
+                  {busy ? 'Requesting...' : 'Send Reset Token'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMode('reset')}
+                  className="px-3 py-2.5 border border-slate-300 text-xs font-semibold rounded-lg"
+                >
+                  Have Token?
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMode('login')}
+                  className="px-3 py-2.5 border border-slate-300 text-xs font-semibold rounded-lg"
+                >
+                  Back
+                </button>
+              </div>
+            </form>
+          )}
 
-            <div className="space-y-1.5">
-              <label className="block text-xs font-semibold text-slate-700">Password</label>
+          {mode === 'reset' && (
+            <form onSubmit={handleConfirmReset} className="space-y-3">
+              <input
+                type="email"
+                required
+                placeholder="Administrator Email *"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 px-3.5 py-2 text-sm"
+              />
+              <input
+                required
+                placeholder="6-digit / Hex Reset Token *"
+                value={resetToken}
+                onChange={(e) => setResetToken(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 px-3.5 py-2 text-sm font-mono"
+              />
               <input
                 type="password"
                 required
-                autoComplete="current-password"
-                placeholder="Enter admin password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 px-3.5 py-2.5 text-sm focus:border-blue-700 focus:outline-none"
+                minLength={8}
+                placeholder="New Password (min 8 chars) *"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 px-3.5 py-2 text-sm"
               />
-            </div>
-
-            <button
-              type="submit"
-              disabled={busy}
-              className="w-full py-3 bg-[#0B1B3B] hover:bg-[#132954] text-white text-sm font-semibold rounded-lg inline-flex items-center justify-center gap-2 disabled:opacity-50"
-            >
-              <Lock className="w-4 h-4" />
-              {busy ? 'Verifying Credentials...' : 'Sign In to Admin Dashboard'}
-              <ArrowRight className="w-4 h-4" />
-            </button>
-          </form>
+              <div className="flex gap-2">
+                <button
+                  type="submit"
+                  disabled={busy}
+                  className="flex-1 py-2.5 bg-blue-700 text-white text-xs font-semibold rounded-lg disabled:opacity-50"
+                >
+                  {busy ? 'Resetting...' : 'Reset Admin Password'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMode('login')}
+                  className="px-3 py-2.5 border border-slate-300 text-xs font-semibold rounded-lg"
+                >
+                  Back
+                </button>
+              </div>
+            </form>
+          )}
 
           <div className="relative py-1">
             <div className="absolute inset-0 flex items-center">

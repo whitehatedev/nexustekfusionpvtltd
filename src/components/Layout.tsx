@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Menu, Search, ShoppingBag, User, X, ArrowRight, ShieldCheck, Mail, Lock } from 'lucide-react';
+import { Menu, Search, ShoppingBag, User, X, ArrowRight, ShieldCheck, Mail, Lock, ChevronDown } from 'lucide-react';
 import { usePlatform } from '../context/PlatformContext';
 
 const COMPANY_LOGO_SRC = '/assets/aistudio/image_1a5ac752.png';
@@ -117,22 +117,62 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
             <span>{company?.brandName || 'NexusTekFusion'}</span>
           </button>
 
-          {/* Zone 2: Concise Single-Line Navigation Links */}
-          <nav className="hidden lg:flex items-center gap-7 text-sm font-medium text-slate-600">
+          {/* Zone 2: Concise Single-Line Navigation Links with Hover/Focus Dropdown Support */}
+          <nav className="hidden lg:flex items-center gap-6 text-sm font-medium text-slate-600">
             {navItems.map((item) => {
-              const active = path === item.to || (item.to !== '/' && path.startsWith(item.to + '/'));
+              const children = item.children || [];
+              const active =
+                path === item.to ||
+                (item.to !== '/' && path.startsWith(item.to + '/')) ||
+                children.some((c) => path === c.to || path.startsWith(c.to + '/'));
+
+              if (children.length === 0) {
+                return (
+                  <button
+                    key={item.id || item.to}
+                    onClick={() => go(item.to)}
+                    className={`whitespace-nowrap shrink-0 py-1 border-b-2 transition-colors ${
+                      active
+                        ? 'border-blue-700 text-[#0B1B3B] font-semibold'
+                        : 'border-transparent hover:text-[#0B1B3B] hover:border-slate-300'
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                );
+              }
+
               return (
-                <button
-                  key={item.id || item.to}
-                  onClick={() => go(item.to)}
-                  className={`whitespace-nowrap shrink-0 py-1 border-b-2 transition-colors ${
-                    active
-                      ? 'border-blue-700 text-[#0B1B3B] font-semibold'
-                      : 'border-transparent hover:text-[#0B1B3B] hover:border-slate-300'
-                  }`}
-                >
-                  {item.label}
-                </button>
+                <div key={item.id || item.to} className="relative group">
+                  <button
+                    onClick={() => go(item.to)}
+                    className={`whitespace-nowrap shrink-0 py-1 border-b-2 transition-colors inline-flex items-center gap-1 ${
+                      active
+                        ? 'border-blue-700 text-[#0B1B3B] font-semibold'
+                        : 'border-transparent hover:text-[#0B1B3B] hover:border-slate-300'
+                    }`}
+                  >
+                    <span>{item.label}</span>
+                    <ChevronDown className="w-3.5 h-3.5 text-slate-400 group-hover:text-[#0B1B3B] transition-transform group-hover:rotate-180" />
+                  </button>
+                  <div className="hidden group-hover:block group-focus-within:block absolute left-0 top-full pt-2 z-50 min-w-[230px]">
+                    <div className="rounded-xl border border-slate-200 bg-white shadow-xl py-2">
+                      {children.map((sub) => (
+                        <button
+                          key={sub.id || sub.to}
+                          onClick={() => go(sub.to)}
+                          className={`w-full text-left px-4 py-2 text-xs font-medium transition-colors block ${
+                            path === sub.to
+                              ? 'bg-blue-50 text-blue-800 font-semibold'
+                              : 'text-slate-700 hover:bg-slate-50 hover:text-[#0B1B3B]'
+                          }`}
+                        >
+                          {sub.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
               );
             })}
           </nav>
@@ -240,10 +280,13 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
                     ['KRASHIVANTRI Drones', '/krashivantri'],
                     ['KRASHIVANTRI X', '/product/krashivantri-x'],
                     ['KRASHIVANTRI X PRO', '/product/krashivantri-x-pro'],
+                    ['Farmer Spraying Portal', '/krashivantri/farmer-portal'],
+                    ['Drone Pilot Portal', '/krashivantri/pilot-portal'],
                     ['About Us', '/about'],
                     ['All Services', '/services'],
                     ['AI & Machine Learning', '/services/ai-ml'],
                     ['Drone Development', '/services/drone-development'],
+                    ['Drone Repair Service', '/services/drone-repair'],
                     ['Robotics', '/services/robotics'],
                     ['IoT & Embedded', '/services/iot-embedded'],
                     ['Automation', '/services/automation'],
@@ -397,6 +440,9 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
                 ['KRASHIVANTRI Drones', '/krashivantri'],
                 ['KRASHIVANTRI X', '/product/krashivantri-x'],
                 ['KRASHIVANTRI X PRO', '/product/krashivantri-x-pro'],
+                ['Farmer Spraying Portal', '/krashivantri/farmer-portal'],
+                ['Drone Pilot Portal', '/krashivantri/pilot-portal'],
+                ['Drone Repair Service', '/services/drone-repair'],
                 ['AI & Machine Learning', '/services/ai-ml'],
                 ['Agricultural & Custom Drones', '/services/drone-development'],
                 ['Robotics & Automation', '/services/robotics'],

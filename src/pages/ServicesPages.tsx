@@ -93,6 +93,12 @@ export const ServicesOverviewPage: React.FC = () => {
   const list = [
     ...Object.values(SERVICES_DATA),
     {
+      slug: 'drone-repair',
+      title: 'Drone Repair & Diagnostics Service',
+      subtitle: 'Agricultural & FPV UAV airframe repair, flight controller calibration, ESC/motor replacement, and field visit support.',
+      image: '/src/assets/images/service_drone_repair_1794987205295.jpg',
+    },
+    {
       slug: 'pcb-design',
       title: 'PCB Design & Fabrication',
       subtitle: 'Schematic capture, multi-layer Gerber layout, BOM engineering, and prototype assembly.',
@@ -458,3 +464,246 @@ export const PcbServicePage: React.FC = () => {
     </div>
   );
 };
+
+export const DroneRepairServicePage: React.FC = () => {
+  const { isSignedIn, dbUser, signInWithGoogle, apiFetch, notify, navigate } = usePlatform();
+  const [form, setForm] = useState({
+    serviceMode: 'service_centre' as 'service_centre' | 'field_visit',
+    customerName: dbUser?.fullName || '',
+    mobile: dbUser?.mobile || '',
+    email: dbUser?.email || '',
+    address: '',
+    city: '',
+    district: '',
+    pinCode: '',
+    droneBrandModel: '',
+    droneType: 'Agriculture',
+    problemDescription: '',
+    preferredDate: '',
+    preferredTime: 'Morning (10 AM - 1 PM)',
+    additionalInfo: '',
+  });
+  const [photos, setPhotos] = useState<File[]>([]);
+  const [video, setVideo] = useState<File | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [submittedRef, setSubmittedRef] = useState('');
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isSignedIn) {
+      await signInWithGoogle();
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const fd = new FormData();
+      Object.entries(form).forEach(([k, v]) => fd.append(k, String(v)));
+      photos.forEach((f) => fd.append('photos', f));
+      if (video) fd.append('video', video);
+
+      const res = await apiFetch<{ booking: { referenceNumber: string } }>('/api/drone-repairs', {
+        method: 'POST',
+        body: fd,
+      });
+      setSubmittedRef(res.booking.referenceNumber);
+      notify(`Drone repair booking ${res.booking.referenceNumber} logged.`, 'success');
+    } catch (err: any) {
+      notify(err?.message || 'Failed to submit drone repair booking.', 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="max-w-6xl mx-auto px-4 sm:px-6 py-14 space-y-12">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 items-center">
+        <div className="lg:col-span-6 space-y-4">
+          <div className="text-xs font-semibold text-blue-700">UAV Diagnostics &amp; Maintenance</div>
+          <h1 className="font-display text-4xl font-bold tracking-tight text-slate-950">
+            Drone Repair, Calibration &amp; Field Support
+          </h1>
+          <p className="text-slate-600 leading-relaxed">
+            Book Nagpur Service Centre bench diagnostics or request an on-site field visit for agricultural spraying drones, mapping UAVs, and industrial multirotors. Inspection charges and itemized repair quotations are approved directly in your dashboard.
+          </p>
+        </div>
+        <div className="lg:col-span-6">
+          <div className="aspect-[4/3] rounded-xl overflow-hidden border border-slate-200 bg-slate-100">
+            <img
+              src="/src/assets/images/service_drone_repair_1794987205295.jpg"
+              alt="Drone repair workbench diagnostics"
+              referrerPolicy="no-referrer"
+              className="w-full h-full object-cover"
+            />
+          </div>
+        </div>
+      </div>
+
+      {submittedRef ? (
+        <div className="rounded-xl border border-blue-200 bg-blue-50 p-8 space-y-3">
+          <h2 className="font-display text-xl font-bold text-[#0B1B3B]">
+            Repair Booking Confirmed — {submittedRef}
+          </h2>
+          <p className="text-sm text-slate-700">
+            Your UAV diagnostics booking has been queued for our Nagpur engineering team. Track technician assignment and quotes from your account.
+          </p>
+          <button
+            onClick={() => navigate('/my-account')}
+            className="px-4 py-2 bg-blue-700 text-white text-xs font-semibold rounded-lg"
+          >
+            View Repair Status in My Account
+          </button>
+        </div>
+      ) : (
+        <form onSubmit={handleSubmit} className="rounded-xl border border-slate-200 bg-white p-6 sm:p-8 space-y-6">
+          <div className="border-b border-slate-200 pb-4 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="font-display text-xl font-bold text-slate-950">Book Drone Repair Service</h2>
+              <p className="text-xs text-slate-500">Upload clear photos/video of crash damage, wiring faults, or ESC errors</p>
+            </div>
+            {!isSignedIn && (
+              <button
+                type="button"
+                onClick={signInWithGoogle}
+                className="px-4 py-2 bg-[#0B1B3B] text-white text-xs font-semibold rounded-lg"
+              >
+                Sign In to Book Repair
+              </button>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {[
+              ['service_centre', 'Nagpur Service Centre Drop-off / Courier', 'Send or bring UAV to our Ganjipeth, Nagpur workshop'],
+              ['field_visit', 'On-Site Field Technician Visit', 'Request engineer dispatch for farm or industrial fleet UAVs'],
+            ].map(([mode, title, desc]) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setForm({ ...form, serviceMode: mode as 'service_centre' | 'field_visit' })}
+                className={`text-left rounded-xl border p-4 transition-colors ${
+                  form.serviceMode === mode ? 'border-blue-700 bg-blue-50' : 'border-slate-200 bg-white hover:bg-slate-50'
+                }`}
+              >
+                <div className="font-semibold text-sm text-[#0B1B3B]">{title}</div>
+                <div className="text-xs text-slate-600 mt-0.5">{desc}</div>
+              </button>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <input
+              required
+              placeholder="Customer Name *"
+              value={form.customerName}
+              onChange={(e) => setForm({ ...form, customerName: e.target.value })}
+              className="rounded-lg border border-slate-300 px-3.5 py-2.5 text-sm"
+            />
+            <input
+              required
+              placeholder="Mobile Number *"
+              value={form.mobile}
+              onChange={(e) => setForm({ ...form, mobile: e.target.value })}
+              className="rounded-lg border border-slate-300 px-3.5 py-2.5 text-sm"
+            />
+            <input
+              type="email"
+              placeholder="Email Address"
+              value={form.email}
+              onChange={(e) => setForm({ ...form, email: e.target.value })}
+              className="rounded-lg border border-slate-300 px-3.5 py-2.5 text-sm"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+            <input
+              required
+              placeholder="Drone Brand / Model *"
+              value={form.droneBrandModel}
+              onChange={(e) => setForm({ ...form, droneBrandModel: e.target.value })}
+              className="sm:col-span-2 rounded-lg border border-slate-300 px-3.5 py-2.5 text-sm"
+            />
+            <select
+              value={form.droneType}
+              onChange={(e) => setForm({ ...form, droneType: e.target.value })}
+              className="rounded-lg border border-slate-300 px-3.5 py-2.5 text-sm bg-white"
+            >
+              <option value="Agriculture">Agricultural Spraying Drone</option>
+              <option value="Survey / Mapping">Mapping / Survey UAV</option>
+              <option value="FPV / Custom">Custom / FPV Multirotor</option>
+              <option value="Industrial">Industrial Inspection UAV</option>
+            </select>
+            <input
+              type="date"
+              value={form.preferredDate}
+              onChange={(e) => setForm({ ...form, preferredDate: e.target.value })}
+              className="rounded-lg border border-slate-300 px-3.5 py-2.5 text-sm font-mono"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+            <input
+              placeholder="Address / Farm Location"
+              value={form.address}
+              onChange={(e) => setForm({ ...form, address: e.target.value })}
+              className="sm:col-span-2 rounded-lg border border-slate-300 px-3.5 py-2.5 text-sm"
+            />
+            <input
+              placeholder="City / District"
+              value={form.city}
+              onChange={(e) => setForm({ ...form, city: e.target.value, district: e.target.value })}
+              className="rounded-lg border border-slate-300 px-3.5 py-2.5 text-sm"
+            />
+            <input
+              placeholder="PIN Code"
+              value={form.pinCode}
+              onChange={(e) => setForm({ ...form, pinCode: e.target.value })}
+              className="rounded-lg border border-slate-300 px-3.5 py-2.5 text-sm font-mono"
+            />
+          </div>
+
+          <textarea
+            required
+            rows={4}
+            placeholder="Describe fault symptoms, crash damage, flight controller errors, pump/nozzle or ESC issues *"
+            value={form.problemDescription}
+            onChange={(e) => setForm({ ...form, problemDescription: e.target.value })}
+            className="w-full rounded-lg border border-slate-300 px-3.5 py-2.5 text-sm"
+          />
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <label className="flex items-center justify-center gap-2 border border-dashed border-slate-300 rounded-lg p-4 cursor-pointer hover:bg-slate-50 text-xs text-slate-600">
+              <Upload className="w-4 h-4 text-blue-700" />
+              <span>{photos.length > 0 ? `${photos.length} photo(s) selected` : 'Upload Damage Photos (max 5)'}</span>
+              <input
+                type="file"
+                multiple
+                accept=".png,.jpg,.jpeg,.webp"
+                onChange={(e) => setPhotos(Array.from(e.target.files || []))}
+                className="hidden"
+              />
+            </label>
+            <label className="flex items-center justify-center gap-2 border border-dashed border-slate-300 rounded-lg p-4 cursor-pointer hover:bg-slate-50 text-xs text-slate-600">
+              <Upload className="w-4 h-4 text-blue-700" />
+              <span>{video ? video.name : 'Upload Diagnostic Video (optional)'}</span>
+              <input
+                type="file"
+                accept=".mp4,.mov"
+                onChange={(e) => setVideo(e.target.files?.[0] || null)}
+                className="hidden"
+              />
+            </label>
+          </div>
+
+          <button
+            type="submit"
+            disabled={submitting}
+            className="px-6 py-3 bg-[#0B1B3B] hover:bg-blue-900 text-white text-sm font-semibold rounded-lg disabled:opacity-50"
+          >
+            {submitting ? 'Submitting Booking...' : isSignedIn ? 'Submit Drone Repair Request' : 'Sign In & Submit Request'}
+          </button>
+        </form>
+      )}
+    </div>
+  );
+};
+

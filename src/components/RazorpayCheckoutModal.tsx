@@ -5,11 +5,13 @@ import { usePlatform } from '../context/PlatformContext';
 interface RazorpayModalProps {
   open: boolean;
   onClose: () => void;
-  entityType: 'store_order' | 'printing_order' | 'project_quotation' | 'pcb_enquiry' | 'b2b_enquiry';
+  entityType: 'store_order' | 'printing_order' | 'project_quotation' | 'pcb_enquiry' | 'b2b_enquiry' | 'farmer_booking';
   entityId: number;
   paymentMode?: 'advance' | 'full' | 'balance';
   title: string;
   amountInr: number;
+  createOrderUrl?: string;
+  verifyUrl?: string;
   onSuccess: () => void;
 }
 
@@ -27,6 +29,8 @@ export const RazorpayCheckoutModal: React.FC<RazorpayModalProps> = ({
   paymentMode,
   title,
   amountInr,
+  createOrderUrl = '/api/payments/create-order',
+  verifyUrl = '/api/payments/verify',
   onSuccess,
 }) => {
   const { apiFetch, notify } = usePlatform();
@@ -54,7 +58,7 @@ export const RazorpayCheckoutModal: React.FC<RazorpayModalProps> = ({
         keyId: string | null;
         amountPaise: number;
         customer: { name: string; email: string; contact: string };
-      }>('/api/payments/create-order', {
+      }>(createOrderUrl, {
         method: 'POST',
         body: JSON.stringify({ entityType, entityId, paymentMode }),
       });
@@ -78,7 +82,7 @@ export const RazorpayCheckoutModal: React.FC<RazorpayModalProps> = ({
             razorpay_payment_id: string;
             razorpay_signature: string;
           }) => {
-            await apiFetch('/api/payments/verify', {
+            await apiFetch(verifyUrl, {
               method: 'POST',
               body: JSON.stringify({
                 entityType,
@@ -98,7 +102,7 @@ export const RazorpayCheckoutModal: React.FC<RazorpayModalProps> = ({
         rzp.open();
       } else {
         // Explicit server-verified Sandbox Test Mode when RAZORPAY_KEY_ID / SECRET are not configured
-        await apiFetch('/api/payments/verify', {
+        await apiFetch(verifyUrl, {
           method: 'POST',
           body: JSON.stringify({
             entityType,

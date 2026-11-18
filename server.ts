@@ -4,11 +4,12 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { and, eq } from 'drizzle-orm';
 import { db } from './src/db/index.ts';
-import { blogs, caseStudies, cmsPages, products } from './src/db/schema.ts';
+import { blogs, caseStudies, cmsPages, paymentWebhookEvents, products } from './src/db/schema.ts';
 import { publicRouter } from './src/server/routes/public.ts';
 import { customerRouter } from './src/server/routes/customer.ts';
 import { adminRouter } from './src/server/routes/admin.ts';
 import { authRouter } from './src/server/routes/auth.ts';
+import { krashivantriRouter } from './src/server/routes/krashivantri.ts';
 import { verifyWebhookSignature } from './src/server/razorpay.ts';
 import { ensureUploadDirs, UPLOADS_ROOT } from './src/server/utils.ts';
 import { ensureInitialSeed } from './src/server/seed.ts';
@@ -22,12 +23,40 @@ async function startServer() {
     console.error('Startup seed check failed:', err);
   });
 
-  // Razorpay Webhook (raw body required for HMAC signature verification)
+  // Razorpay Webhook (raw body required for HMAC signature verification & idempotency)
   const handleRazorpayWebhook = async (req: express.Request, res: express.Response) => {
     const signature = String(req.headers['x-razorpay-signature'] || '');
     const rawBody = req.body instanceof Buffer ? req.body.toString('utf8') : JSON.stringify(req.body);
     if (!(await verifyWebhookSignature(rawBody, signature))) {
       return res.status(400).json({ error: 'Invalid Razorpay webhook signature.' });
+    }
+    try {
+      const payload = JSON.parse(rawBody || '{}');
+      const paymentEntity = payload?.payload?.payment?.entity;
+      const eventType = String(payload?.event || 'payment.event');
+      const eventId = String(
+        req.headers['x-razorpay-event-id'] ||
+          `${paymentEntity?.id || Date.now()}_${eventType}`
+      );
+      const existing = await db
+        .select()
+        .from(paymentWebhookEvents)
+        .where(eq(paymentWebhookEvents.eventId, eventId))
+        .limit(1);
+      if (existing.length > 0) {
+        return res.json({ received: true, duplicate: true });
+      }
+      await db.insert(paymentWebhookEvents).values({
+        eventId,
+        provider: 'razorpay',
+        eventType,
+        razorpayOrderId: String(paymentEntity?.order_id || ''),
+        razorpayPaymentId: String(paymentEntity?.id || ''),
+        payload,
+        processingStatus: 'processed',
+      });
+    } catch (err) {
+      console.error('Webhook log error:', err);
     }
     res.json({ received: true });
   };
@@ -65,6 +94,8 @@ async function startServer() {
       '/services/pcb-design',
       '/services/3d-printing',
       '/krashivantri',
+      '/krashivantri/farmer-portal',
+      '/krashivantri/pilot-portal',
       '/projects',
       '/project-enquiry',
       '/shop',
@@ -115,6 +146,7 @@ async function startServer() {
   app.use('/api/auth', authRouter);
   app.use('/api', publicRouter);
   app.use('/api', customerRouter);
+  app.use('/api', krashivantriRouter);
   app.use('/api/admin', adminRouter);
 
   // Error handler for multer & API errors

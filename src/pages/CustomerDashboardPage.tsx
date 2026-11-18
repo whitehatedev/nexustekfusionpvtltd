@@ -1,9 +1,30 @@
 import React, { useEffect, useState } from 'react';
-import { Download, CreditCard, LogOut, Bell, Heart, Trash2, CheckCircle2 } from 'lucide-react';
+import {
+  Award,
+  Bell,
+  CheckCircle2,
+  CreditCard,
+  Download,
+  FileCheck2,
+  Heart,
+  Lock,
+  LogOut,
+  Navigation,
+  Sprout,
+  Trash2,
+  Truck,
+} from 'lucide-react';
 import { usePlatform } from '../context/PlatformContext';
 import { AddressSelector } from '../components/AddressSelector';
 import { RazorpayCheckoutModal } from '../components/RazorpayCheckoutModal';
-import { downloadInvoicePdf, downloadQuotationPdf } from '../lib/pdf';
+import {
+  downloadClearanceCertificatePdf,
+  downloadCompletionCertificatePdf,
+  downloadInvoicePdf,
+  downloadPaymentReceiptPdf,
+  downloadQuotationPdf,
+  downloadWorkOrderPdf,
+} from '../lib/pdf';
 import { AddressData } from '../types/platform';
 
 type TabKey =
@@ -24,23 +45,23 @@ const PROJECT_STAGES = [
   'Quotation Prepared',
   'Quotation Sent',
   'Accepted / Awaiting Payment',
-  'Advance Paid / Payment Confirmed',
-  'Project Started',
-  'In Progress',
-  'Testing',
-  'Ready for Delivery / Dispatched',
+  'Advance Paid / Work Order Issued',
+  'In Progress & Testing',
+  'Awaiting Final Payment',
+  'Payment Cleared – Ready for Handover',
+  'Dispatched / Delivered',
   'Completed',
 ] as const;
 
 function resolveProjectStageIndex(enquiryStatus: string, projectStatus?: string): number {
   const s = (projectStatus || enquiryStatus || 'Submitted').toLowerCase();
-  if (s === 'completed') return 11;
-  if (s === 'ready for delivery' || s === 'dispatched') return 10;
-  if (s === 'testing') return 9;
-  if (s === 'in progress') return 8;
-  if (s === 'project started') return 7;
-  if (s === 'advance paid' || s === 'payment confirmed') return 6;
-  if (s === 'awaiting payment' || s === 'accepted') return 5;
+  if (s === 'completed' || s === 'handover acknowledged') return 11;
+  if (s === 'delivered' || s === 'dispatched' || s === 'ready for delivery') return 10;
+  if (s.includes('cleared') || s.includes('ready for handover')) return 9;
+  if (s.includes('awaiting final payment')) return 8;
+  if (s === 'testing' || s === 'in progress') return 7;
+  if (s.includes('advance paid') || s.includes('project started') || s.includes('payment confirmed')) return 6;
+  if (s.includes('awaiting payment') || s === 'accepted') return 5;
   if (s === 'quotation sent') return 4;
   if (s === 'quotation prepared') return 3;
   if (s === 'technical review') return 2;
@@ -49,7 +70,8 @@ function resolveProjectStageIndex(enquiryStatus: string, projectStatus?: string)
 }
 
 export const CustomerDashboardPage: React.FC<{ initialTab?: TabKey }> = ({ initialTab }) => {
-  const { fbUser, dbUser, isSignedIn, signInWithGoogle, signOut, apiFetch, notify, navigate, settings, isAdmin } = usePlatform();
+  const { fbUser, dbUser, isSignedIn, signInWithGoogle, signOut, apiFetch, notify, navigate, settings, isAdmin, getIdToken } =
+    usePlatform();
   const [tab, setTab] = useState<TabKey>(initialTab || 'overview');
 
   useEffect(() => {
@@ -173,6 +195,47 @@ export const CustomerDashboardPage: React.FC<{ initialTab?: TabKey }> = ({ initi
     }
   };
 
+  const downloadPrivateHandover = async (projectId: number, docId: number, token: string, fileName: string) => {
+    try {
+      const idToken = await getIdToken();
+      const headers: Record<string, string> = {};
+      if (idToken) headers.Authorization = `Bearer ${idToken}`;
+      const resp = await fetch(
+        `/api/projects/${projectId}/handover-documents/${docId}/download?token=${encodeURIComponent(token)}`,
+        { headers, credentials: 'same-origin' }
+      );
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ error: 'Download blocked or expired.' }));
+        throw new Error(err.error || 'Download failed.');
+      }
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      loadDashboard();
+    } catch (err: any) {
+      notify(err?.message || 'Failed to download deliverable.', 'error');
+    }
+  };
+
+  const acknowledgeHandover = async (projectId: number) => {
+    try {
+      const res = await apiFetch<{ completionCertificateNumber: string }>(
+        `/api/projects/${projectId}/acknowledge-handover`,
+        { method: 'POST' }
+      );
+      notify(`Handover acknowledged. Completion Certificate ${res.completionCertificateNumber} generated.`, 'success');
+      loadDashboard();
+    } catch (err: any) {
+      notify(err?.message || 'Failed to acknowledge handover.', 'error');
+    }
+  };
+
   const unreadCount = (data?.notifications || []).filter((n: any) => !n.isRead).length;
 
   return (
@@ -250,6 +313,69 @@ export const CustomerDashboardPage: React.FC<{ initialTab?: TabKey }> = ({ initi
                   </div>
                 ))}
               </div>
+
+              {/* KRASHIVANTRI Spraying & Pilot Portal Shortcuts */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="rounded-xl border border-slate-200 bg-white p-5 flex items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <div className="text-xs font-semibold text-emerald-700 flex items-center gap-1.5">
+                      <Sprout className="w-4 h-4" /> KRASHIVANTRI Farmer Portal
+                    </div>
+                    <div className="text-xs text-slate-600">
+                      {data.farmerProfile
+                        ? `${data.farmerProfile.farmerCode} · KYC: ${data.farmerProfile.kycStatus}`
+                        : 'Register farm plots, draw boundaries & book spraying drones.'}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => navigate('/krashivantri/farmer-portal')}
+                    className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-lg whitespace-nowrap"
+                  >
+                    Open Farmer Portal
+                  </button>
+                </div>
+
+                <div className="rounded-xl border border-slate-200 bg-white p-5 flex items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <div className="text-xs font-semibold text-blue-700 flex items-center gap-1.5">
+                      <Navigation className="w-4 h-4" /> KRASHIVANTRI Drone Pilot Portal
+                    </div>
+                    <div className="text-xs text-slate-600">
+                      {data.pilotProfile
+                        ? `${data.pilotProfile.pilotCode} · KYC: ${data.pilotProfile.kycStatus}`
+                        : 'Enroll DGCA RPC credentials, go online & manage spraying ops.'}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => navigate('/krashivantri/pilot-portal')}
+                    className="px-4 py-2 bg-[#0B1B3B] hover:bg-blue-900 text-white text-xs font-semibold rounded-lg whitespace-nowrap"
+                  >
+                    Open Pilot Portal
+                  </button>
+                </div>
+              </div>
+
+              {(data.droneRepairs || []).length > 0 && (
+                <div className="rounded-xl border border-slate-200 bg-white p-6 space-y-3">
+                  <h2 className="font-display font-bold text-slate-950">
+                    Drone Repair &amp; Diagnostics Bookings ({data.droneRepairs.length})
+                  </h2>
+                  <div className="divide-y divide-slate-100 text-xs">
+                    {data.droneRepairs.map((dr: any) => (
+                      <div key={dr.id} className="py-2.5 flex flex-wrap justify-between gap-2">
+                        <div>
+                          <span className="font-mono font-bold text-[#0B1B3B]">{dr.referenceNumber}</span> · {dr.droneBrandModel} ({dr.serviceMode})
+                          <div className="text-slate-500">{dr.problemDescription}</div>
+                        </div>
+                        <div className="text-right font-mono">
+                          <div className="font-semibold text-blue-700">{dr.status}</div>
+                          {dr.repairQuotationInr && <div>Quote: ₹{dr.repairQuotationInr.toLocaleString('en-IN')}</div>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
                 <div className="flex items-center justify-between">
@@ -340,41 +466,242 @@ export const CustomerDashboardPage: React.FC<{ initialTab?: TabKey }> = ({ initi
           {/* PROJECTS & QUOTATIONS */}
           {tab === 'projects' && (
             <div className="space-y-8">
-              {/* Active Projects */}
+              {/* Active Projects, Milestones, Final Balance & Handover */}
               <div className="space-y-4">
-                <h2 className="font-display text-xl font-bold text-slate-950">Active Projects & Milestones</h2>
+                <h2 className="font-display text-xl font-bold text-slate-950">Active Projects, Payments &amp; Deliverable Handover</h2>
                 {data.projects.length === 0 ? (
                   <div className="rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-500">
                     No active projects yet. Projects activate automatically once a quotation is accepted and advance payment is verified.
                   </div>
                 ) : (
-                  data.projects.map((p: any) => (
-                    <div key={p.id} className="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
-                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
-                        <div>
-                          <div className="font-mono text-xs text-blue-700 font-semibold">{p.projectCode}</div>
-                          <h3 className="font-display text-lg font-bold text-slate-950">{p.title}</h3>
-                        </div>
-                        <div className="text-xs font-semibold text-slate-700">
-                          Status: {p.status} · Engineer: {p.assignedEngineer}
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                        {(p.milestones || []).map((m: any) => (
-                          <div key={m.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs space-y-1">
-                            <div className="font-semibold text-slate-900">{m.title}</div>
-                            <div className="text-blue-700 font-medium">{m.status}</div>
-                            {m.notes && <div className="text-slate-600">{m.notes}</div>}
+                  data.projects.map((p: any) => {
+                    const workOrder = (data.workOrders || []).find((w: any) => w.projectId === p.id);
+                    const clearanceCert = (data.clearanceCertificates || []).find((c: any) => c.projectId === p.id);
+                    const handoverDocs = (data.handoverDocuments || []).filter((d: any) => d.projectId === p.id);
+                    const deliveries = (data.deliveryRecords || []).filter((d: any) => d.projectId === p.id);
+                    const payMilestones = (data.paymentMilestones || []).filter(
+                      (m: any) => m.projectId === p.id || (p.quotationId && m.quotationId === p.quotationId)
+                    );
+                    const customerEmail = dbUser?.email || fbUser?.email || '';
+
+                    return (
+                      <div key={p.id} className="rounded-xl border border-slate-200 bg-white p-6 space-y-5">
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                          <div>
+                            <div className="font-mono text-xs text-blue-700 font-semibold">{p.projectCode}</div>
+                            <h3 className="font-display text-lg font-bold text-slate-950">{p.title}</h3>
                           </div>
-                        ))}
-                      </div>
-                      {p.trackingId && (
-                        <div className="text-xs text-slate-600 font-mono">
-                          Shipment: {p.trackingCourier} · {p.trackingId}
+                          <div className="text-right text-xs">
+                            <div className="font-semibold text-slate-900">
+                              Status: {p.status} · Engineer: {p.assignedEngineer}
+                            </div>
+                            <div className="font-mono text-slate-600 tabular-nums mt-0.5">
+                              Total ₹{Number(p.totalAmountInr || 0).toLocaleString('en-IN')} · Paid ₹
+                              {Number(p.paidAmountInr || 0).toLocaleString('en-IN')} · Balance ₹
+                              {Number(p.balanceAmountInr || 0).toLocaleString('en-IN')}
+                            </div>
+                          </div>
                         </div>
-                      )}
-                    </div>
-                  ))
+
+                        {/* Balance Due Banner */}
+                        {Number(p.balanceAmountInr || 0) > 0 && p.quotationId && (
+                          <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 flex flex-wrap items-center justify-between gap-3">
+                            <div className="text-xs text-amber-950 space-y-0.5">
+                              <div className="font-bold">
+                                Final Balance Pending: ₹{Number(p.balanceAmountInr).toLocaleString('en-IN')}
+                              </div>
+                              <div>
+                                {p.handoverExceptionAuthorized
+                                  ? 'Exception authorized by Super Admin. Complete remaining balance per agreed schedule.'
+                                  : 'Complete final payment to unlock gated digital deliverable downloads and issue your Payment Clearance Certificate.'}
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPayModal({
+                                  open: true,
+                                  entityType: 'project_quotation',
+                                  entityId: p.quotationId,
+                                  paymentMode: 'balance',
+                                  title: `Final Balance — ${p.projectCode}`,
+                                  amountInr: p.balanceAmountInr,
+                                })
+                              }
+                              className="px-4 py-2 bg-[#0B1B3B] hover:bg-blue-900 text-white text-xs font-semibold rounded-lg inline-flex items-center gap-1.5"
+                            >
+                              <CreditCard className="w-3.5 h-3.5" /> Pay Remaining Balance ₹
+                              {Number(p.balanceAmountInr).toLocaleString('en-IN')}
+                            </button>
+                          </div>
+                        )}
+
+                        {/* Payment Milestones */}
+                        {payMilestones.length > 0 && (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            {payMilestones.map((m: any) => (
+                              <div key={m.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs flex justify-between items-center">
+                                <div>
+                                  <div className="font-semibold text-slate-900">{m.stageName} ({m.percent}%)</div>
+                                  <div className="text-[11px] text-slate-500">{m.dueTrigger}</div>
+                                </div>
+                                <div className="text-right font-mono tabular-nums">
+                                  <div className="font-bold text-slate-950">₹{m.amountInr.toLocaleString('en-IN')}</div>
+                                  <div className={m.status === 'paid' ? 'text-emerald-700 font-semibold' : 'text-amber-700 font-semibold'}>
+                                    {m.status}
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Engineering Milestones */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                          {(p.milestones || []).map((m: any) => (
+                            <div key={m.id} className="rounded-lg border border-slate-200 bg-white p-3 text-xs space-y-1">
+                              <div className="font-semibold text-slate-900">{m.title}</div>
+                              <div className="text-blue-700 font-medium">{m.status}</div>
+                              {m.notes && <div className="text-slate-600">{m.notes}</div>}
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Official Project Documents & Handover Deliverables */}
+                        <div className="flex flex-wrap gap-2">
+                          {workOrder && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                downloadWorkOrderPdf({
+                                  workOrderNumber: workOrder.workOrderNumber,
+                                  projectCode: p.projectCode,
+                                  projectTitle: p.title,
+                                  assignedEngineer: workOrder.assignedEngineer || p.assignedEngineer,
+                                  estimatedCompletionDate: workOrder.estimatedCompletionDate,
+                                  scopeSummary: workOrder.scopeSummary,
+                                  issuedAt: workOrder.issuedAt,
+                                  customerEmail,
+                                })
+                              }
+                              className="px-3 py-1.5 border border-slate-300 bg-white hover:bg-slate-50 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5"
+                            >
+                              <Download className="w-3.5 h-3.5 text-blue-700" /> Work Order ({workOrder.workOrderNumber})
+                            </button>
+                          )}
+
+                          {clearanceCert && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                downloadClearanceCertificatePdf({
+                                  certificateNumber: clearanceCert.certificateNumber,
+                                  projectCode: p.projectCode,
+                                  projectTitle: p.title,
+                                  totalAmountInr: clearanceCert.totalAmountInr,
+                                  advancePaidInr: clearanceCert.advancePaidInr,
+                                  finalPaidInr: clearanceCert.finalPaidInr,
+                                  balanceInr: clearanceCert.balanceInr,
+                                  paymentRefs: clearanceCert.paymentRefs || [],
+                                  issuedAt: clearanceCert.issuedAt,
+                                  issuedBy: clearanceCert.issuedBy,
+                                  customerEmail,
+                                })
+                              }
+                              className="px-3 py-1.5 border border-emerald-300 bg-emerald-50 text-emerald-950 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5"
+                            >
+                              <Award className="w-3.5 h-3.5 text-emerald-700" /> Payment Clearance Cert ({clearanceCert.certificateNumber})
+                            </button>
+                          )}
+
+                          {p.completionCertificateNumber && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                downloadCompletionCertificatePdf({
+                                  certificateNumber: p.completionCertificateNumber,
+                                  projectCode: p.projectCode,
+                                  projectTitle: p.title,
+                                  acknowledgedBy: p.customerAcknowledgedBy || customerEmail,
+                                  acknowledgedAt: p.customerAcknowledgedAt || new Date().toISOString(),
+                                  assignedEngineer: p.assignedEngineer || 'NexusTekFusion Engineering',
+                                })
+                              }
+                              className="px-3 py-1.5 border border-blue-300 bg-blue-50 text-blue-950 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5"
+                            >
+                              <FileCheck2 className="w-3.5 h-3.5 text-blue-700" /> Completion Cert ({p.completionCertificateNumber})
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Gated Deliverables Vault */}
+                        {handoverDocs.length > 0 && (
+                          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-2 text-xs">
+                            <div className="font-semibold text-[#0B1B3B] flex items-center gap-1.5">
+                              {p.handoverUnlocked ? (
+                                <CheckCircle2 className="w-4 h-4 text-emerald-700" />
+                              ) : (
+                                <Lock className="w-4 h-4 text-amber-700" />
+                              )}
+                              Project Deliverable Vault ({handoverDocs.length} files)
+                            </div>
+                            <div className="divide-y divide-slate-200">
+                              {handoverDocs.map((doc: any) => (
+                                <div key={doc.id} className="py-2 flex flex-wrap items-center justify-between gap-2">
+                                  <div>
+                                    <div className="font-semibold text-slate-900">
+                                      {doc.title} ({doc.versionLabel})
+                                    </div>
+                                    <div className="font-mono text-[11px] text-slate-500">
+                                      {doc.fileName} · Category: {doc.category}
+                                    </div>
+                                  </div>
+                                  {doc.unlocked && doc.downloadToken ? (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        downloadPrivateHandover(p.id, doc.id, doc.downloadToken, doc.fileName)
+                                      }
+                                      className="px-3 py-1.5 bg-blue-700 hover:bg-blue-800 text-white rounded font-semibold inline-flex items-center gap-1"
+                                    >
+                                      <Download className="w-3.5 h-3.5" /> Download
+                                    </button>
+                                  ) : (
+                                    <span className="font-mono text-[11px] text-amber-800 inline-flex items-center gap-1">
+                                      <Lock className="w-3 h-3" /> Locked until balance cleared
+                                    </span>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Courier Dispatch & Handover Acknowledgment */}
+                        {(deliveries.length > 0 || p.trackingId) && (
+                          <div className="text-xs text-slate-700 font-mono flex items-center gap-2">
+                            <Truck className="w-4 h-4 text-blue-700 shrink-0" />
+                            <span>
+                              Dispatch:{' '}
+                              {deliveries[0]
+                                ? `${deliveries[0].courierName} · AWB ${deliveries[0].trackingNumber} (${deliveries[0].dispatchDate})`
+                                : `${p.trackingCourier} · ${p.trackingId}`}
+                            </span>
+                          </div>
+                        )}
+
+                        {p.handoverUnlocked && !p.customerAcknowledgedAt && (
+                          <button
+                            type="button"
+                            onClick={() => acknowledgeHandover(p.id)}
+                            className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-lg inline-flex items-center gap-1.5"
+                          >
+                            <CheckCircle2 className="w-4 h-4" /> Acknowledge Deliverable Receipt &amp; Issue Completion Certificate
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })
                 )}
               </div>
 
@@ -812,7 +1139,43 @@ export const CustomerDashboardPage: React.FC<{ initialTab?: TabKey }> = ({ initi
               </div>
 
               <div className="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
-                <h2 className="font-display font-bold text-lg text-slate-950">Invoices & Receipts</h2>
+                <h2 className="font-display font-bold text-lg text-slate-950">Invoices &amp; Official Receipts</h2>
+                {(data.receipts || []).length > 0 && (
+                  <div className="space-y-2 pb-3 border-b border-slate-100">
+                    <div className="text-xs font-semibold text-slate-700">Verified Payment Receipts</div>
+                    <div className="divide-y divide-slate-100 text-xs">
+                      {data.receipts.map((rcp: any) => (
+                        <div key={rcp.id} className="py-2 flex items-center justify-between gap-2">
+                          <div>
+                            <span className="font-mono font-semibold text-[#0B1B3B]">{rcp.receiptNumber}</span> ·{' '}
+                            <span className="text-slate-500">
+                              {rcp.paymentStage} · ₹{Number(rcp.amountInr).toLocaleString('en-IN')}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              downloadPaymentReceiptPdf({
+                                receiptNumber: rcp.receiptNumber,
+                                paymentRef: rcp.paymentRef,
+                                razorpayPaymentId: rcp.razorpayPaymentId,
+                                paymentStage: rcp.paymentStage,
+                                amountInr: rcp.amountInr,
+                                issuedAt: rcp.issuedAt,
+                                customerEmail: dbUser?.email || fbUser?.email || '',
+                                referenceCode: rcp.payload?.projectCode || rcp.paymentRef,
+                              })
+                            }
+                            className="px-3 py-1 border border-slate-300 rounded-lg font-semibold inline-flex items-center gap-1 hover:bg-slate-50"
+                          >
+                            <Download className="w-3 h-3" /> Receipt PDF
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {data.invoices.length === 0 ? (
                   <p className="text-sm text-slate-500">No invoices issued yet.</p>
                 ) : (
@@ -842,7 +1205,7 @@ export const CustomerDashboardPage: React.FC<{ initialTab?: TabKey }> = ({ initi
                           }
                           className="px-3 py-1.5 border border-slate-300 rounded-lg font-semibold inline-flex items-center gap-1 hover:bg-slate-50"
                         >
-                          <Download className="w-3.5 h-3.5" /> PDF
+                          <Download className="w-3.5 h-3.5" /> Invoice PDF
                         </button>
                       </div>
                     ))}

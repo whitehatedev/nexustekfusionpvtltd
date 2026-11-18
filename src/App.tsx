@@ -7,7 +7,7 @@ import { PlatformProvider, usePlatform } from './context/PlatformContext';
 import { Layout } from './components/Layout';
 import { HomePage } from './pages/HomePage';
 import { AboutPage, FaqPage, PolicyPage } from './pages/AboutAndLegalPages';
-import { ServicesOverviewPage, ServiceDetailPage, PcbServicePage } from './pages/ServicesPages';
+import { ServicesOverviewPage, ServiceDetailPage, PcbServicePage, DroneRepairServicePage } from './pages/ServicesPages';
 import { Printing3DPage } from './pages/Printing3DPage';
 import { ShopListingPage, ProductDetailPage, CartPage, CheckoutPage } from './pages/ShopPages';
 import { ProjectsShowcasePage, ProjectDetailPage, ProjectEnquiryPage } from './pages/ProjectsAndEnquiryPages';
@@ -17,6 +17,7 @@ import { CustomerDashboardPage } from './pages/CustomerDashboardPage';
 import { AdminDashboardPage } from './pages/AdminDashboardPage';
 import { AdminLoginPage } from './pages/AdminLoginPage';
 import { KrashivantriPage } from './pages/KrashivantriPage';
+import { FarmerPortalPage, PilotPortalPage } from './pages/KrashivantriPortalsPage';
 import { CustomCmsPage } from './pages/CustomCmsPage';
 import { WebsiteEditorPage } from './pages/WebsiteEditorPage';
 
@@ -38,6 +39,7 @@ const AppRouter: React.FC = () => {
     if (normalized === '/services') return <ServicesOverviewPage />;
     if (normalized === '/services/pcb-design') return <PcbServicePage />;
     if (normalized === '/services/3d-printing') return <Printing3DPage />;
+    if (normalized === '/services/drone-repair') return <DroneRepairServicePage />;
 
     if (normalized.startsWith('/services/')) {
       const slug = normalized.replace('/services/', '');
@@ -54,6 +56,8 @@ const AppRouter: React.FC = () => {
     if (normalized === '/project-enquiry') return <ProjectEnquiryPage />;
 
     if (normalized === '/krashivantri') return <KrashivantriPage />;
+    if (normalized === '/krashivantri/farmer-portal') return <FarmerPortalPage />;
+    if (normalized === '/krashivantri/pilot-portal') return <PilotPortalPage />;
 
     if (normalized === '/shop') return <ShopListingPage />;
     if (normalized.startsWith('/shop/category/')) {
@@ -110,11 +114,38 @@ const AppRouter: React.FC = () => {
     if (normalized === '/admin/project-enquiries' || normalized === '/admin/projects') {
       return <AdminDashboardPage initialTab="projects" />;
     }
-    if (normalized === '/admin/project-settings') {
-      return <AdminDashboardPage initialTab="project_settings" />;
+    if (normalized === '/admin/project-settings' || normalized === '/admin/settings/project-payments') {
+      return <AdminDashboardPage initialTab="project_payment_settings" />;
+    }
+    if (normalized === '/admin/project-finance') {
+      return <AdminDashboardPage initialTab="project_finance" />;
     }
     if (normalized === '/admin/settings/payments') {
       return <AdminDashboardPage initialTab="payment_settings" />;
+    }
+    if (normalized === '/admin/farmers') {
+      return <AdminDashboardPage initialTab="krash_farmers" />;
+    }
+    if (normalized === '/admin/drone-pilots') {
+      return <AdminDashboardPage initialTab="krash_pilots" />;
+    }
+    if (normalized === '/admin/live-tracking') {
+      return <AdminDashboardPage initialTab="krash_live_tracking" />;
+    }
+    if (normalized === '/admin/orders/live') {
+      return <AdminDashboardPage initialTab="krash_orders_live" />;
+    }
+    if (normalized === '/admin/farmer-payments') {
+      return <AdminDashboardPage initialTab="krash_farmer_payments" />;
+    }
+    if (normalized === '/admin/pilot-payouts') {
+      return <AdminDashboardPage initialTab="krash_pilot_payouts" />;
+    }
+    if (normalized === '/admin/penalties') {
+      return <AdminDashboardPage initialTab="krash_penalties" />;
+    }
+    if (normalized === '/admin/finance') {
+      return <AdminDashboardPage initialTab="krash_finance" />;
     }
 
     return (

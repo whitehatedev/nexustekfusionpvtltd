@@ -265,6 +265,7 @@ export interface NavigationMenuItem {
   to: string;
   visible: boolean;
   sortOrder: number;
+  children?: Array<{ id: string; label: string; to: string }>;
 }
 
 export interface ServiceCatalogItem {
@@ -390,6 +391,9 @@ export interface SiteSettings {
     privacy: string;
     terms: string;
   };
+  projectPaymentSettings?: ProjectPaymentSettings;
+  projectEmailTemplates?: EmailTemplateDef[];
+  krashivantriOpsConfig?: KrashivantriOpsConfig;
 }
 
 export interface DroneRepairBooking {
@@ -427,5 +431,329 @@ export interface DroneRepairBooking {
   statusHistory: Array<{ status: string; timestamp: string; note: string; actor: string }>;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ProjectPaymentSettings {
+  defaultPlanType: string;
+  advancePercent: number;
+  finalPercent: number;
+  allowFullPayment: boolean;
+  enableGstTax: boolean;
+  gstPercent: number;
+  quotationValidityDays: number;
+  quotationPrefix: string;
+  projectPrefix: string;
+  paymentPrefix: string;
+  invoicePrefix: string;
+  receiptPrefix: string;
+  clearancePrefix: string;
+  workOrderPrefix: string;
+  handoverDownloadExpiryDays: number;
+  reminderIntervalsDays: number[];
+  allowHandoverExceptionBySuperAdmin: boolean;
+  cancellationRefundPolicy: string;
+}
+
+export interface EmailTemplateDef {
+  eventType: string;
+  label: string;
+  enabled: boolean;
+  subject: string;
+  body: string;
+}
+
+export interface ProjectPaymentMilestone {
+  id: number;
+  planId: number | null;
+  projectId: number | null;
+  quotationId: number;
+  stageName: string;
+  stageOrder: number;
+  percent: number;
+  amountInr: number;
+  dueTrigger: string;
+  status: string;
+  paymentRef: string;
+  paidAt: string | null;
+}
+
+export interface PaymentReceiptRecord {
+  id: number;
+  receiptNumber: string;
+  paymentRef: string;
+  entityType: string;
+  entityId: number;
+  paymentStage: string;
+  amountInr: number;
+  razorpayPaymentId: string;
+  payload: Record<string, unknown>;
+  issuedAt: string;
+}
+
+export interface PaymentClearanceCertificate {
+  id: number;
+  certificateNumber: string;
+  projectId: number;
+  enquiryId: number;
+  quotationId: number | null;
+  totalAmountInr: number;
+  advancePaidInr: number;
+  finalPaidInr: number;
+  balanceInr: number;
+  paymentRefs: string[];
+  issuedBy: string;
+  issuedAt: string;
+}
+
+export interface ProjectWorkOrder {
+  id: number;
+  workOrderNumber: string;
+  projectId: number;
+  enquiryId: number;
+  assignedEngineer: string;
+  estimatedCompletionDate: string;
+  scopeSummary: string;
+  issuedAt: string;
+}
+
+export interface ProjectHandoverDocument {
+  id: number;
+  projectId: number;
+  title: string;
+  category: string;
+  fileName: string;
+  fileSizeBytes: number;
+  versionLabel: string;
+  notes: string;
+  downloadToken?: string | null;
+  tokenExpiresAt: string;
+  downloadCount: number;
+  lastDownloadedAt: string | null;
+  uploadedBy: string;
+  createdAt: string;
+  locked?: boolean;
+}
+
+export interface ProjectDeliveryRecord {
+  id: number;
+  projectId: number;
+  courierName: string;
+  trackingNumber: string;
+  trackingUrl: string;
+  dispatchDate: string;
+  expectedDeliveryDate: string;
+  actualDeliveryDate: string;
+  dispatchNotes: string;
+  updatedBy: string;
+  createdAt: string;
+}
+
+export interface KrashivantriOpsConfig {
+  baseRatePerAcreInr: number;
+  minimumBookingAcres: number;
+  platformCommissionPercent: number;
+  gpsStaleThresholdMinutes: number;
+  arrivalGeofenceMeters: number;
+  pilotResponseTimeoutMinutes: number;
+  cancellationBeforeDispatchRefundPercent: number;
+  lateArrivalPenaltyInr: number;
+}
+
+export interface FarmerProfile {
+  id: number;
+  userId: number | null;
+  farmerCode: string;
+  fullName: string;
+  mobile: string;
+  email: string;
+  village: string;
+  taluka: string;
+  district: string;
+  state: string;
+  pinCode: string;
+  aadhaarLast4: string;
+  kycStatus: string;
+  accountStatus: string;
+  totalLandAcres: number;
+  cropsGrown: string;
+  rejectionReason: string;
+  verifiedBy: string;
+  verifiedAt: string;
+  createdAt: string;
+}
+
+export interface FarmerFarm {
+  id: number;
+  farmerId: number;
+  farmName: string;
+  cropType: string;
+  areaAcres: number;
+  village: string;
+  district: string;
+  state: string;
+  pinCode: string;
+  centerLat: number;
+  centerLng: number;
+  boundaryGeoJson: Array<{ lat: number; lng: number }>;
+  isActive: boolean;
+}
+
+export interface DronePilotProfile {
+  id: number;
+  userId: number | null;
+  pilotCode: string;
+  fullName: string;
+  mobile: string;
+  email: string;
+  city: string;
+  district: string;
+  state: string;
+  pinCode: string;
+  rpcNumber: string;
+  rpcValidUntil: string;
+  kycStatus: string;
+  accountStatus: string;
+  serviceRadiusKm: number;
+  totalSprayedAcres: number;
+  penaltyPoints: number;
+  rejectionReason: string;
+  verifiedBy: string;
+  createdAt: string;
+}
+
+export interface PilotDrone {
+  id: number;
+  pilotId: number;
+  droneModel: string;
+  uinNumber: string;
+  tankCapacityLiters: number;
+  sprayWidthMeters: number;
+  verificationStatus: string;
+}
+
+export interface PilotBankAccount {
+  id: number;
+  pilotId: number;
+  accountHolderName: string;
+  bankName: string;
+  accountNumberMasked: string;
+  ifscCode: string;
+  upiId: string;
+  verificationStatus: string;
+  isPrimary: boolean;
+}
+
+export interface PilotAvailability {
+  id: number;
+  pilotId: number;
+  isOnline: boolean;
+  gpsPermissionGranted: boolean;
+  currentLat: number | null;
+  currentLng: number | null;
+  accuracyMeters: number | null;
+  speedMps: number | null;
+  headingDeg: number | null;
+  batteryPercent: number | null;
+  lastLocationAt: string | null;
+  status: string;
+  gpsStalenessSeconds?: number | null;
+  isStale?: boolean;
+  gpsAvailable?: boolean;
+}
+
+export interface ServiceBooking {
+  id: number;
+  bookingNumber: string;
+  farmerId: number;
+  farmId: number | null;
+  assignedPilotId: number | null;
+  cropType: string;
+  sprayType: string;
+  chemicalProvidedBy: string;
+  bookedAreaAcres: number;
+  ratePerAcreInr: number;
+  totalAmountInr: number;
+  platformCommissionPercent: number;
+  pilotPayoutInr: number;
+  preferredDate: string;
+  preferredSlot: string;
+  farmLat: number;
+  farmLng: number;
+  farmBoundary: Array<{ lat: number; lng: number }>;
+  bookingStatus: string;
+  paymentStatus: string;
+  farmerNotes: string;
+  createdAt: string;
+  farmer?: Partial<FarmerProfile> | null;
+  assignedPilot?: (Partial<DronePilotProfile> & { availability?: PilotAvailability | null }) | null;
+  session?: OperationSession | null;
+  evidence?: OperationEvidence[];
+}
+
+export interface OperationSession {
+  id: number;
+  sessionCode: string;
+  bookingId: number;
+  pilotId: number;
+  farmerId: number;
+  status: string;
+  startedAt: string | null;
+  pausedAt: string | null;
+  resumedAt: string | null;
+  completedAt: string | null;
+  insideGeofenceOnStart: boolean;
+  geofenceDistanceMeters: number;
+  completedAreaAcres: number;
+  pauseReason: string;
+  pilotNotes: string;
+  farmerConfirmed: boolean;
+  farmerDisputeReason: string;
+}
+
+export interface OperationEvidence {
+  id: number;
+  sessionId: number;
+  bookingId: number;
+  pilotId: number;
+  evidencePhase: string;
+  mediaType: string;
+  fileName: string;
+  storagePath: string;
+  latitude: number | null;
+  longitude: number | null;
+  caption: string;
+  capturedAt: string;
+}
+
+export interface PilotPayout {
+  id: number;
+  payoutRef: string;
+  pilotId: number;
+  amountInr: number;
+  bankAccountMasked: string;
+  payoutProvider: string;
+  providerPayoutId: string;
+  status: string;
+  failureReason: string;
+  approvedBy: string;
+  processedAt: string | null;
+  createdAt: string;
+}
+
+export interface PenaltyRecord {
+  id: number;
+  penaltyNumber: string;
+  targetType: string;
+  targetId: number;
+  targetLabel?: string;
+  bookingId: number | null;
+  reasonCategory: string;
+  description: string;
+  evidenceSummary: string;
+  amountInr: number;
+  status: string;
+  appealStatus: string;
+  imposedBy: string;
+  createdAt: string;
 }
 

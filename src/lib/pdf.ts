@@ -7,6 +7,7 @@ export function downloadQuotationPdf(params: {
   customerEmail: string;
   quotation: {
     id: number;
+    quotationNumber?: string;
     revisionNumber: number;
     items: Array<{ name: string; description: string; qty: number; unitPriceInr: number }>;
     hardwareCostInr: number;
@@ -16,6 +17,7 @@ export function downloadQuotationPdf(params: {
     documentationChargesInr: number;
     deliveryChargesInr: number;
     costCategories?: Record<string, number>;
+    technicalScope?: string;
     validityDays?: number;
     estimatedDuration?: string;
     paymentTerms?: string;
@@ -47,17 +49,25 @@ export function downloadQuotationPdf(params: {
   doc.line(14, 38, 196, 38);
 
   doc.setFontSize(13);
-  doc.text(`PROJECT QUOTATION — REV #${q.revisionNumber}`, 14, 46);
+  doc.text(`PROJECT QUOTATION ${q.quotationNumber ? `(${q.quotationNumber}) ` : ''}— REV #${q.revisionNumber}`, 14, 46);
   doc.setFontSize(10);
   doc.text(`Enquiry Ref: ${params.enquiryNumber}`, 14, 53);
   doc.text(`Project: ${params.projectTitle}`, 14, 59);
   doc.text(`Prepared For: ${params.customerName} (${params.customerEmail})`, 14, 65);
   doc.text(`Status: ${q.status} | Validity: ${q.validityDays || 15} Days`, 14, 71);
+  let y = 77;
   if (q.estimatedDuration) {
-    doc.text(`Estimated Duration: ${q.estimatedDuration}`, 14, 77);
+    doc.text(`Estimated Duration: ${q.estimatedDuration}`, 14, y);
+    y += 6;
   }
-
-  let y = q.estimatedDuration ? 86 : 80;
+  if (q.technicalScope) {
+    doc.setFontSize(9);
+    const scopeLines = doc.splitTextToSize(`Scope: ${q.technicalScope}`, 180);
+    doc.text(scopeLines, 14, y);
+    y += scopeLines.length * 4.5 + 3;
+    doc.setFontSize(10);
+  }
+  y += 2;
   doc.setFontSize(10);
   doc.text('Itemized Cost Breakdown', 14, y);
   y += 5;
@@ -290,4 +300,225 @@ export function downloadPackingSlipPdf(order: {
   doc.text('Packed & QC Verified By: NexusTekFusion Dispatch Team (Nagpur)', 14, y);
 
   doc.save(`${order.orderNumber}_PackingSlip.pdf`);
+}
+
+function addCompanyHeader(doc: jsPDF, gstin?: string) {
+  doc.setFontSize(16);
+  doc.text('NEXUSTEKFUSION PRIVATE LIMITED', 14, 18);
+  doc.setFontSize(9);
+  doc.text('CIN: U30305ME2026PTC474052 | info@nexustekfusion.in | https://nexustekfusion.in', 14, 24);
+  doc.text('H NO. 565/19 NIT, SANKUL NEW COTTON MARK, Ganjipeth, Nagpur 440018, India', 14, 29);
+  if (gstin) doc.text(`GSTIN: ${gstin}`, 14, 34);
+  doc.setDrawColor(190);
+  doc.line(14, 38, 196, 38);
+}
+
+export function downloadPaymentReceiptPdf(params: {
+  receiptNumber: string;
+  paymentRef: string;
+  razorpayPaymentId?: string;
+  paymentStage: string;
+  amountInr: number;
+  issuedAt: string;
+  customerEmail: string;
+  referenceCode?: string;
+  gstin?: string;
+}) {
+  const doc = new jsPDF();
+  addCompanyHeader(doc, params.gstin);
+  doc.setFontSize(14);
+  doc.text('OFFICIAL PAYMENT RECEIPT', 14, 48);
+  doc.setFontSize(10);
+  doc.text(`Receipt No: ${params.receiptNumber}`, 14, 57);
+  doc.text(`Payment Ref: ${params.paymentRef}`, 14, 63);
+  if (params.razorpayPaymentId) doc.text(`Gateway Transaction ID: ${params.razorpayPaymentId}`, 14, 69);
+  doc.text(`Issued Date: ${new Date(params.issuedAt).toLocaleDateString('en-IN')}`, 14, 75);
+  doc.text(`Customer: ${params.customerEmail}`, 14, 81);
+  if (params.referenceCode) doc.text(`Project / Booking Ref: ${params.referenceCode}`, 14, 87);
+  doc.text(`Payment Stage: ${params.paymentStage.toUpperCase()}`, 14, 93);
+  doc.line(14, 100, 196, 100);
+  doc.setFontSize(12);
+  doc.text(`Verified Amount Received: INR ${params.amountInr.toLocaleString('en-IN')}`, 14, 110);
+  doc.setFontSize(9);
+  doc.text('Digitally verified by NEXUSTEKFUSION PRIVATE LIMITED Accounts System.', 14, 126);
+  doc.save(`${params.receiptNumber}.pdf`);
+}
+
+export function downloadWorkOrderPdf(params: {
+  workOrderNumber: string;
+  projectCode: string;
+  projectTitle: string;
+  assignedEngineer: string;
+  estimatedCompletionDate?: string;
+  scopeSummary?: string;
+  issuedAt: string;
+  customerEmail: string;
+}) {
+  const doc = new jsPDF();
+  addCompanyHeader(doc);
+  doc.setFontSize(14);
+  doc.text('ENGINEERING WORK ORDER', 14, 48);
+  doc.setFontSize(10);
+  doc.text(`Work Order No: ${params.workOrderNumber}`, 14, 57);
+  doc.text(`Project Code: ${params.projectCode}`, 14, 63);
+  doc.text(`Project Title: ${params.projectTitle}`, 14, 69);
+  doc.text(`Client: ${params.customerEmail}`, 14, 75);
+  doc.text(`Assigned Engineer: ${params.assignedEngineer}`, 14, 81);
+  if (params.estimatedCompletionDate) doc.text(`Target Completion: ${params.estimatedCompletionDate}`, 14, 87);
+  doc.text(`Issued Date: ${new Date(params.issuedAt).toLocaleDateString('en-IN')}`, 14, 93);
+  doc.line(14, 99, 196, 99);
+  doc.text('Authorized Technical Scope:', 14, 108);
+  doc.setFontSize(9);
+  const lines = doc.splitTextToSize(params.scopeSummary || 'As per approved project quotation.', 180);
+  doc.text(lines, 14, 115);
+  doc.save(`${params.workOrderNumber}.pdf`);
+}
+
+export function downloadClearanceCertificatePdf(params: {
+  certificateNumber: string;
+  projectCode: string;
+  projectTitle: string;
+  totalAmountInr: number;
+  advancePaidInr: number;
+  finalPaidInr: number;
+  balanceInr: number;
+  paymentRefs: string[];
+  issuedAt: string;
+  issuedBy: string;
+  customerEmail: string;
+}) {
+  const doc = new jsPDF();
+  addCompanyHeader(doc);
+  doc.setFillColor(11, 27, 59);
+  doc.rect(14, 44, 182, 12, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(11);
+  doc.text('PAYMENT CLEARED — PROJECT READY FOR HANDOVER', 20, 52);
+  doc.setTextColor(0, 0, 0);
+
+  doc.setFontSize(10);
+  doc.text(`Certificate Number: ${params.certificateNumber}`, 14, 66);
+  doc.text(`Project Code: ${params.projectCode} — ${params.projectTitle}`, 14, 72);
+  doc.text(`Customer Account: ${params.customerEmail}`, 14, 78);
+  doc.text(`Issued At: ${new Date(params.issuedAt).toLocaleString('en-IN')}`, 14, 84);
+  doc.text(`Authorized By: ${params.issuedBy}`, 14, 90);
+  doc.line(14, 96, 196, 96);
+
+  doc.text(`Total Contract Value: INR ${params.totalAmountInr.toLocaleString('en-IN')}`, 14, 106);
+  doc.text(`Advance Verified: INR ${params.advancePaidInr.toLocaleString('en-IN')}`, 14, 113);
+  doc.text(`Final Balance Verified: INR ${params.finalPaidInr.toLocaleString('en-IN')}`, 14, 120);
+  doc.setFontSize(12);
+  doc.text(`Outstanding Balance Due: INR ${params.balanceInr.toLocaleString('en-IN')}`, 14, 129);
+  doc.setFontSize(9);
+  doc.text(`Verified Payment References: ${params.paymentRefs.join(', ') || 'Recorded'}`, 14, 140);
+  doc.save(`${params.certificateNumber}.pdf`);
+}
+
+export function downloadCompletionCertificatePdf(params: {
+  certificateNumber: string;
+  projectCode: string;
+  projectTitle: string;
+  acknowledgedBy: string;
+  acknowledgedAt: string;
+  assignedEngineer: string;
+}) {
+  const doc = new jsPDF();
+  addCompanyHeader(doc);
+  doc.setFontSize(15);
+  doc.text('PROJECT COMPLETION & HANDOVER CERTIFICATE', 14, 52);
+  doc.setFontSize(10);
+  doc.text(`Completion Certificate No: ${params.certificateNumber}`, 14, 64);
+  doc.text(`Project Code: ${params.projectCode}`, 14, 71);
+  doc.text(`Project Title: ${params.projectTitle}`, 14, 78);
+  doc.text(`Lead Engineer: ${params.assignedEngineer}`, 14, 85);
+  doc.text(`Acknowledged By Client: ${params.acknowledgedBy}`, 14, 92);
+  doc.text(`Handover Timestamp: ${new Date(params.acknowledgedAt).toLocaleString('en-IN')}`, 14, 99);
+  doc.line(14, 106, 196, 106);
+  doc.setFontSize(9);
+  doc.text(
+    'This certifies that all deliverables for the above project have been handed over and acknowledged.',
+    14,
+    116
+  );
+  doc.save(`${params.certificateNumber}.pdf`);
+}
+
+export function downloadProjectFinanceReportPdf(params: {
+  summary: {
+    projectCount: number;
+    totalQuotedInr: number;
+    totalCollectedInr: number;
+    totalOutstandingInr: number;
+    clearedProjectsCount: number;
+  };
+  projects: Array<{
+    projectCode: string;
+    title: string;
+    customerName: string;
+    totalAmountInr: number;
+    paidAmountInr: number;
+    balanceAmountInr: number;
+    paymentClearanceStatus: string;
+  }>;
+}) {
+  const doc = new jsPDF();
+  addCompanyHeader(doc);
+  doc.setFontSize(13);
+  doc.text('PROJECT FINANCIAL SUMMARY REPORT', 14, 48);
+  doc.setFontSize(9);
+  doc.text(`Generated: ${new Date().toLocaleString('en-IN')}`, 14, 54);
+  doc.text(
+    `Projects: ${params.summary.projectCount} | Quoted: INR ${params.summary.totalQuotedInr.toLocaleString('en-IN')} | Collected: INR ${params.summary.totalCollectedInr.toLocaleString('en-IN')} | Outstanding: INR ${params.summary.totalOutstandingInr.toLocaleString('en-IN')}`,
+    14,
+    61
+  );
+  doc.line(14, 66, 196, 66);
+  let y = 74;
+  for (const p of params.projects) {
+    if (y > 270) {
+      doc.addPage();
+      y = 20;
+    }
+    doc.text(`${p.projectCode} — ${p.title.slice(0, 38)} (${p.customerName})`, 14, y);
+    doc.text(
+      `Total: ${p.totalAmountInr} | Paid: ${p.paidAmountInr} | Bal: ${p.balanceAmountInr} [${p.paymentClearanceStatus}]`,
+      14,
+      y + 4.5
+    );
+    y += 11;
+  }
+  doc.save(`NexusTekFusion_Project_Finance_${new Date().toISOString().slice(0, 10)}.pdf`);
+}
+
+export function downloadKrashivantriReportPdf(params: {
+  summary: {
+    totalBookings: number;
+    totalFarmerCollectionsInr: number;
+    platformCommissionInr: number;
+    settledPayoutsInr: number;
+    pendingPayoutsInr: number;
+    totalPenaltiesInr: number;
+  };
+}) {
+  const doc = new jsPDF();
+  addCompanyHeader(doc);
+  doc.setFontSize(13);
+  doc.text('KRASHIVANTRI DRONE OPERATIONS FINANCIAL REPORT', 14, 48);
+  doc.setFontSize(10);
+  doc.text(`Generated: ${new Date().toLocaleString('en-IN')}`, 14, 56);
+  doc.line(14, 62, 196, 62);
+  const lines = [
+    `Total Spraying Bookings: ${params.summary.totalBookings}`,
+    `Total Farmer Collections: INR ${params.summary.totalFarmerCollectionsInr.toLocaleString('en-IN')}`,
+    `Platform Commission Earned: INR ${params.summary.platformCommissionInr.toLocaleString('en-IN')}`,
+    `Settled Pilot Payouts: INR ${params.summary.settledPayoutsInr.toLocaleString('en-IN')}`,
+    `Pending Pilot Payouts: INR ${params.summary.pendingPayoutsInr.toLocaleString('en-IN')}`,
+    `Active / Deducted Penalties: INR ${params.summary.totalPenaltiesInr.toLocaleString('en-IN')}`,
+  ];
+  let y = 72;
+  for (const l of lines) {
+    doc.text(l, 14, y);
+    y += 8;
+  }
+  doc.save(`KRASHIVANTRI_Financial_Report_${new Date().toISOString().slice(0, 10)}.pdf`);
 }

@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { Router } from 'express';
 import fs from 'fs';
 import path from 'path';
@@ -14,10 +15,13 @@ import {
   coupons,
   crmLeads,
   crmNotes,
+  droneRepairBookings,
   inventoryMovements,
   invoices,
   mediaAssets,
   newsletterSubscribers,
+  paymentClearanceCertificates,
+  paymentReceipts,
   payments,
   pcbEnquiries,
   printingMachines,
@@ -25,8 +29,15 @@ import {
   printingOrders,
   productCategories,
   products,
+  projectAcceptances,
+  projectDeliveryRecords,
+  projectEmailNotifications,
   projectEnquiries,
+  projectHandoverDocuments,
+  projectPaymentMilestones,
+  projectPaymentPlans,
   projectQuotations,
+  projectWorkOrders,
   projects,
   siteSettings,
   storeOrders,
@@ -37,11 +48,13 @@ import { AuthRequest, requireAdmin, requireAuth } from '../../middleware/auth.ts
 import {
   createNotification,
   createUploadMiddleware,
+  generateCode,
   logAudit,
   UPLOADS_ROOT,
 } from '../utils.ts';
 import { encryptSecret, getRazorpayCredentials } from '../razorpay.ts';
 import { DEFAULT_HOMEPAGE_SECTIONS } from '../seed.ts';
+import { DEFAULT_PROJECT_EMAIL_TEMPLATES, dispatchLifecycleEmail } from '../email.ts';
 
 export const adminRouter = Router();
 
@@ -52,6 +65,12 @@ const mediaUpload = createUploadMiddleware(
   'media',
   ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg', '.pdf', '.stl', '.obj', '.glb', '.step', '.stp'],
   50
+);
+
+const handoverUpload = createUploadMiddleware(
+  'projects-handover',
+  ['.zip', '.pdf', '.png', '.jpg', '.jpeg', '.doc', '.docx', '.txt', '.csv', '.mp4', '.bin', '.hex'],
+  100
 );
 
 function toCsv(headers: string[], rows: Array<Array<string | number | boolean | null | undefined>>): string {
@@ -129,6 +148,15 @@ adminRouter.get('/overview', async (_req, res) => {
       allInvoices,
       allLeads,
       allNotes,
+      allReceipts,
+      allClearanceCerts,
+      allWorkOrders,
+      allHandoverDocs,
+      allDeliveryRecords,
+      allPaymentPlans,
+      allPaymentMilestones,
+      allEmailLogs,
+      allDroneRepairs,
     ] = await Promise.all([
       db.select().from(users).orderBy(desc(users.createdAt)),
       db.select().from(storeOrders).where(eq(storeOrders.isDeleted, false)).orderBy(desc(storeOrders.createdAt)),
@@ -155,6 +183,15 @@ adminRouter.get('/overview', async (_req, res) => {
       db.select().from(invoices).where(eq(invoices.isDeleted, false)).orderBy(desc(invoices.issuedAt)),
       db.select().from(crmLeads).where(eq(crmLeads.isDeleted, false)).orderBy(desc(crmLeads.updatedAt)),
       db.select().from(crmNotes).orderBy(desc(crmNotes.createdAt)).limit(150),
+      db.select().from(paymentReceipts).orderBy(desc(paymentReceipts.issuedAt)),
+      db.select().from(paymentClearanceCertificates).orderBy(desc(paymentClearanceCertificates.issuedAt)),
+      db.select().from(projectWorkOrders).orderBy(desc(projectWorkOrders.issuedAt)),
+      db.select().from(projectHandoverDocuments).where(eq(projectHandoverDocuments.isDeleted, false)).orderBy(desc(projectHandoverDocuments.createdAt)),
+      db.select().from(projectDeliveryRecords).orderBy(desc(projectDeliveryRecords.createdAt)),
+      db.select().from(projectPaymentPlans).orderBy(desc(projectPaymentPlans.createdAt)),
+      db.select().from(projectPaymentMilestones).orderBy(asc(projectPaymentMilestones.stageOrder)),
+      db.select().from(projectEmailNotifications).orderBy(desc(projectEmailNotifications.createdAt)).limit(60),
+      db.select().from(droneRepairBookings).orderBy(desc(droneRepairBookings.createdAt)),
     ]);
 
     const verifiedPayments = allPayments.filter((p) => p.status === 'verified');
@@ -295,6 +332,15 @@ adminRouter.get('/overview', async (_req, res) => {
       crmNotes: allNotes,
       supportTickets: allTickets,
       recentAudit,
+      receipts: allReceipts,
+      clearanceCertificates: allClearanceCerts,
+      workOrders: allWorkOrders,
+      handoverDocuments: allHandoverDocs,
+      deliveryRecords: allDeliveryRecords,
+      projectPaymentPlans: allPaymentPlans,
+      projectPaymentMilestones: allPaymentMilestones,
+      emailNotifications: allEmailLogs,
+      droneRepairs: allDroneRepairs,
     });
   } catch (error) {
     console.error('Admin overview error:', error);
@@ -1185,6 +1231,17 @@ adminRouter.patch('/project-enquiries/:id', async (req: AuthRequest, res) => {
         message: `Reason: ${updated.rejectionReason}`,
         link: '/my-account/project-enquiries',
       });
+      await dispatchLifecycleEmail({
+        userId: updated.userId,
+        enquiryId: updated.id,
+        recipientEmail: updated.customerEmail,
+        eventType: 'enquiry_rejected',
+        vars: {
+          customerName: updated.customerName,
+          enquiryNumber: updated.enquiryNumber,
+          reason: updated.rejectionReason,
+        },
+      });
     } else if (status === 'Clarification Needed' && updated.clarificationNotes) {
       await createNotification({
         userId: updated.userId,
@@ -1198,6 +1255,17 @@ adminRouter.patch('/project-enquiries/:id', async (req: AuthRequest, res) => {
         title: `Project Enquiry ${updated.enquiryNumber}: ${status}`,
         message: updated.assignedEngineer ? `Assigned to ${updated.assignedEngineer}.` : 'Technical review is underway.',
         link: '/my-account/project-enquiries',
+      });
+      await dispatchLifecycleEmail({
+        userId: updated.userId,
+        enquiryId: updated.id,
+        recipientEmail: updated.customerEmail,
+        eventType: 'enquiry_under_review',
+        vars: {
+          customerName: updated.customerName,
+          enquiryNumber: updated.enquiryNumber,
+          projectTitle: updated.projectTitle,
+        },
       });
     }
 
@@ -1226,10 +1294,16 @@ adminRouter.post('/quotations', async (req: AuthRequest, res) => {
       .limit(1);
     if (!enquiry) return res.status(404).json({ error: 'Enquiry not found.' });
 
-    const existingQuotes = await db
-      .select()
-      .from(projectQuotations)
-      .where(eq(projectQuotations.enquiryId, enquiryId));
+    const [existingQuotes, [payCfgRow]] = await Promise.all([
+      db.select().from(projectQuotations).where(eq(projectQuotations.enquiryId, enquiryId)),
+      db.select().from(siteSettings).where(eq(siteSettings.key, 'projectPaymentSettings')).limit(1),
+    ]);
+    const payCfg = (payCfgRow?.value as {
+      advancePercent?: number;
+      allowFullPayment?: boolean;
+      quotationPrefix?: string;
+      quotationValidityDays?: number;
+    }) || {};
     const revisionNumber = existingQuotes.length + 1;
 
     const items = Array.isArray(b.items) ? b.items : [];
@@ -1262,14 +1336,19 @@ adminRouter.post('/quotations', async (req: AuthRequest, res) => {
     const gstInr = Number(b.gstInr || 0);
 
     const totalAmountInr = Math.max(1, itemsSum + categoriesSum + gstInr - discountInr);
-    const advancePercent = Math.min(100, Math.max(10, Number(b.advancePercent ?? 50)));
+    const defaultAdv = Number(payCfg.advancePercent ?? 50);
+    const advancePercent = Math.min(100, Math.max(10, Number(b.advancePercent ?? defaultAdv)));
+    const finalPercent = Math.max(0, 100 - advancePercent);
     const advanceAmountInr = Math.round((totalAmountInr * advancePercent) / 100);
     const balanceAmountInr = totalAmountInr - advanceAmountInr;
+    const quotationNumber = generateCode(payCfg.quotationPrefix || 'NTF-QTN');
+    const allowFullPayment = b.allowFullPayment !== undefined ? Boolean(b.allowFullPayment) : payCfg.allowFullPayment !== false;
 
     const [quotation] = await db
       .insert(projectQuotations)
       .values({
         enquiryId,
+        quotationNumber,
         revisionNumber,
         items,
         hardwareCostInr: costCategories.hardware + costCategories.sensors + costCategories.pcb + costCategories.mechanical + costCategories.printing3d,
@@ -1279,19 +1358,71 @@ adminRouter.post('/quotations', async (req: AuthRequest, res) => {
         documentationChargesInr: costCategories.documentation,
         deliveryChargesInr: costCategories.delivery,
         costCategories,
-        validityDays: Number(b.validityDays || 15),
+        technicalScope: String(b.technicalScope || '').trim(),
+        validityDays: Number(b.validityDays || payCfg.quotationValidityDays || 15),
         estimatedDuration: String(b.estimatedDuration || '3–4 Weeks'),
-        paymentTerms: String(b.paymentTerms || `${advancePercent}% Advance, Balance on Completion / Dispatch`),
+        paymentTerms: String(
+          b.paymentTerms ||
+            (finalPercent > 0
+              ? `${advancePercent}% Advance, ${finalPercent}% Final Payment before Handover`
+              : '100% Upfront Payment')
+        ),
+        paymentDueDate: String(b.paymentDueDate || ''),
         termsAndConditions: String(b.termsAndConditions || ''),
+        allowFullPayment,
         discountInr,
         gstInr,
         totalAmountInr,
+        totalAmountPaise: Math.round(totalAmountInr * 100),
         advancePercent,
         advanceAmountInr,
+        advanceAmountPaise: Math.round(advanceAmountInr * 100),
         balanceAmountInr,
+        balanceAmountPaise: Math.round(balanceAmountInr * 100),
         status: 'Sent',
       })
       .returning();
+
+    const [plan] = await db
+      .insert(projectPaymentPlans)
+      .values({
+        enquiryId,
+        quotationId: quotation.id,
+        planType: advancePercent === 100 ? 'full_100' : advancePercent === 50 ? '50_50_split' : 'custom_split',
+        advancePercent,
+        finalPercent,
+        allowFullPayment,
+        isOverride: Boolean(b.advancePercent !== undefined && Number(b.advancePercent) !== defaultAdv),
+        overrideReason: String(b.planOverrideReason || ''),
+        createdBy: req.dbUser!.email,
+      })
+      .returning();
+
+    await db.insert(projectPaymentMilestones).values({
+      planId: plan.id,
+      quotationId: quotation.id,
+      stageName: 'Advance Payment',
+      stageOrder: 1,
+      percent: advancePercent,
+      amountInr: advanceAmountInr,
+      amountPaise: Math.round(advanceAmountInr * 100),
+      dueTrigger: 'on_acceptance',
+      status: 'pending',
+    });
+
+    if (balanceAmountInr > 0) {
+      await db.insert(projectPaymentMilestones).values({
+        planId: plan.id,
+        quotationId: quotation.id,
+        stageName: 'Final Balance Payment',
+        stageOrder: 2,
+        percent: finalPercent,
+        amountInr: balanceAmountInr,
+        amountPaise: Math.round(balanceAmountInr * 100),
+        dueTrigger: 'on_completion',
+        status: 'pending',
+      });
+    }
 
     await db
       .update(projectEnquiries)
@@ -1300,9 +1431,24 @@ adminRouter.post('/quotations', async (req: AuthRequest, res) => {
 
     await createNotification({
       userId: enquiry.userId,
-      title: `Quotation Ready for ${enquiry.enquiryNumber}`,
+      title: `Quotation ${quotationNumber} Ready (${enquiry.enquiryNumber})`,
       message: `Revision #${revisionNumber} totaling ₹${totalAmountInr} (Advance ₹${advanceAmountInr}) is ready for review.`,
       link: '/my-account/project-enquiries',
+    });
+
+    await dispatchLifecycleEmail({
+      userId: enquiry.userId,
+      enquiryId,
+      recipientEmail: enquiry.customerEmail,
+      eventType: 'quotation_sent',
+      vars: {
+        customerName: enquiry.customerName,
+        enquiryNumber: enquiry.enquiryNumber,
+        quotationNumber,
+        totalAmountInr,
+        advanceAmountInr,
+        balanceAmountInr,
+      },
     });
 
     await logAudit({
@@ -1311,10 +1457,10 @@ adminRouter.post('/quotations', async (req: AuthRequest, res) => {
       action: 'CREATE_QUOTATION',
       entityType: 'project_quotation',
       entityId: quotation.id,
-      details: { enquiryId, totalAmountInr },
+      details: { enquiryId, quotationNumber, totalAmountInr },
     });
 
-    res.status(201).json({ quotation });
+    res.status(201).json({ quotation, plan });
   } catch (error) {
     console.error('Create quotation error:', error);
     res.status(500).json({ error: 'Failed to create quotation.' });
@@ -1352,6 +1498,30 @@ adminRouter.patch('/projects/:id', async (req: AuthRequest, res) => {
       message: `Status: ${updated.status}. Check your dashboard for milestone progress.`,
       link: '/my-account/project-enquiries',
     });
+
+    const [enq] = await db
+      .select()
+      .from(projectEnquiries)
+      .where(eq(projectEnquiries.id, updated.enquiryId))
+      .limit(1);
+    if (enq?.customerEmail) {
+      const latestSummary =
+        Array.isArray(updated.updates) && updated.updates.length > 0
+          ? updated.updates[updated.updates.length - 1].summary
+          : `Status changed to ${updated.status}`;
+      await dispatchLifecycleEmail({
+        userId: updated.userId,
+        projectId: updated.id,
+        enquiryId: updated.enquiryId,
+        recipientEmail: enq.customerEmail,
+        eventType: 'milestone_updated',
+        vars: {
+          customerName: enq.customerName,
+          projectCode: updated.projectCode,
+          summary: latestSummary,
+        },
+      });
+    }
 
     await logAudit({
       actorUid: req.dbUser!.uid,
@@ -2088,5 +2258,598 @@ adminRouter.put('/payment-settings', requireAdmin(['super_admin']), async (req: 
   } catch (error) {
     console.error('Save payment settings error:', error);
     res.status(500).json({ error: 'Failed to save encrypted payment settings.' });
+  }
+});
+
+// ============================================================================
+// MODULE 1: PROJECT PAYMENT PLANS, FINAL PAYMENT WORKFLOW, HANDOVER & FINANCE
+// ============================================================================
+adminRouter.get('/settings/project-payments', async (_req, res) => {
+  const [row] = await db
+    .select()
+    .from(siteSettings)
+    .where(eq(siteSettings.key, 'projectPaymentSettings'))
+    .limit(1);
+  res.json({ settings: row?.value || {} });
+});
+
+adminRouter.put('/settings/project-payments', requireAdmin(['super_admin']), async (req: AuthRequest, res) => {
+  try {
+    const b = req.body;
+    const advancePercent = Math.min(100, Math.max(10, Number(b.advancePercent ?? 50)));
+    const finalPercent = Math.max(0, 100 - advancePercent);
+    if (b.finalPercent !== undefined && advancePercent + Number(b.finalPercent) !== 100) {
+      return res.status(400).json({ error: 'Advance % and Final % must total 100%.' });
+    }
+
+    const nextVal = {
+      defaultPlanType: advancePercent === 100 ? 'full_100' : advancePercent === 50 ? '50_50_split' : 'custom_split',
+      advancePercent,
+      finalPercent,
+      allowFullPayment: b.allowFullPayment !== false,
+      enableGstTax: Boolean(b.enableGstTax),
+      gstPercent: Number(b.gstPercent ?? 18),
+      quotationValidityDays: Math.max(1, Number(b.quotationValidityDays ?? 15)),
+      quotationPrefix: String(b.quotationPrefix || 'NTF-QTN').trim().toUpperCase(),
+      projectPrefix: String(b.projectPrefix || 'NTF-PRJ').trim().toUpperCase(),
+      paymentPrefix: String(b.paymentPrefix || 'NTF-PAY').trim().toUpperCase(),
+      invoicePrefix: String(b.invoicePrefix || 'NTF-INV').trim().toUpperCase(),
+      receiptPrefix: String(b.receiptPrefix || 'NTF-RCP').trim().toUpperCase(),
+      clearancePrefix: String(b.clearancePrefix || 'NTF-CLR').trim().toUpperCase(),
+      workOrderPrefix: String(b.workOrderPrefix || 'NTF-WRK').trim().toUpperCase(),
+      handoverDownloadExpiryDays: Math.max(1, Number(b.handoverDownloadExpiryDays ?? 30)),
+      reminderIntervalsDays: Array.isArray(b.reminderIntervalsDays) ? b.reminderIntervalsDays.map(Number) : [3, 7, 14],
+      allowHandoverExceptionBySuperAdmin: b.allowHandoverExceptionBySuperAdmin !== false,
+      cancellationRefundPolicy: String(b.cancellationRefundPolicy || ''),
+    };
+
+    await db
+      .insert(siteSettings)
+      .values({ key: 'projectPaymentSettings', value: nextVal, updatedAt: new Date() })
+      .onConflictDoUpdate({
+        target: siteSettings.key,
+        set: { value: nextVal, updatedAt: new Date() },
+      });
+
+    await logAudit({
+      actorUid: req.dbUser!.uid,
+      actorEmail: req.dbUser!.email,
+      action: 'UPDATE_PROJECT_PAYMENT_SETTINGS',
+      entityType: 'site_settings',
+      entityId: 'projectPaymentSettings',
+      details: nextVal as unknown as Record<string, unknown>,
+    });
+
+    res.json({ settings: nextVal });
+  } catch {
+    res.status(500).json({ error: 'Failed to update project payment settings.' });
+  }
+});
+
+adminRouter.get('/settings/project-email-templates', async (_req, res) => {
+  const [row] = await db
+    .select()
+    .from(siteSettings)
+    .where(eq(siteSettings.key, 'projectEmailTemplates'))
+    .limit(1);
+  res.json({ templates: Array.isArray(row?.value) ? row.value : DEFAULT_PROJECT_EMAIL_TEMPLATES });
+});
+
+adminRouter.put('/settings/project-email-templates', requireAdmin(['super_admin']), async (req: AuthRequest, res) => {
+  try {
+    const templates = req.body.templates;
+    if (!Array.isArray(templates)) return res.status(400).json({ error: 'Templates array is required.' });
+    await db
+      .insert(siteSettings)
+      .values({ key: 'projectEmailTemplates', value: templates, updatedAt: new Date() })
+      .onConflictDoUpdate({
+        target: siteSettings.key,
+        set: { value: templates, updatedAt: new Date() },
+      });
+
+    await logAudit({
+      actorUid: req.dbUser!.uid,
+      actorEmail: req.dbUser!.email,
+      action: 'UPDATE_PROJECT_EMAIL_TEMPLATES',
+      entityType: 'site_settings',
+      entityId: 'projectEmailTemplates',
+    });
+
+    res.json({ templates });
+  } catch {
+    res.status(500).json({ error: 'Failed to save email templates.' });
+  }
+});
+
+adminRouter.post('/projects/:id/override-payment-plan', requireAdmin(['super_admin']), async (req: AuthRequest, res) => {
+  try {
+    const projectId = Number(req.params.id);
+    const { advancePercent, allowFullPayment, reason } = req.body;
+    if (!String(reason || '').trim()) {
+      return res.status(400).json({ error: 'A clear reason is mandatory to override a project payment plan.' });
+    }
+
+    const [proj] = await db.select().from(projects).where(eq(projects.id, projectId)).limit(1);
+    if (!proj || !proj.quotationId) return res.status(404).json({ error: 'Project or linked quotation not found.' });
+
+    const [quot] = await db.select().from(projectQuotations).where(eq(projectQuotations.id, proj.quotationId)).limit(1);
+    if (!quot) return res.status(404).json({ error: 'Quotation not found.' });
+
+    const nextAdvPct = Math.min(100, Math.max(10, Number(advancePercent ?? 50)));
+    const nextFinalPct = 100 - nextAdvPct;
+    const newAdvInr = Math.round((quot.totalAmountInr * nextAdvPct) / 100);
+    const newBalInr = quot.totalAmountInr - newAdvInr;
+
+    await db
+      .update(projectQuotations)
+      .set({
+        advancePercent: nextAdvPct,
+        advanceAmountInr: newAdvInr,
+        advanceAmountPaise: Math.round(newAdvInr * 100),
+        balanceAmountInr: newBalInr,
+        balanceAmountPaise: Math.round(newBalInr * 100),
+        allowFullPayment: allowFullPayment !== undefined ? Boolean(allowFullPayment) : quot.allowFullPayment,
+        planOverrideReason: String(reason).trim(),
+        planOverrideBy: req.dbUser!.email,
+      })
+      .where(eq(projectQuotations.id, quot.id));
+
+    await db.insert(projectPaymentPlans).values({
+      projectId: proj.id,
+      enquiryId: proj.enquiryId,
+      quotationId: quot.id,
+      planType: nextAdvPct === 100 ? 'full_100' : nextAdvPct === 50 ? '50_50_split' : 'custom_split',
+      advancePercent: nextAdvPct,
+      finalPercent: nextFinalPct,
+      allowFullPayment: allowFullPayment !== undefined ? Boolean(allowFullPayment) : quot.allowFullPayment,
+      isOverride: true,
+      overrideReason: String(reason).trim(),
+      createdBy: req.dbUser!.email,
+    });
+
+    await logAudit({
+      actorUid: req.dbUser!.uid,
+      actorEmail: req.dbUser!.email,
+      action: 'OVERRIDE_PROJECT_PAYMENT_PLAN',
+      entityType: 'project',
+      entityId: projectId,
+      details: { advancePercent: nextAdvPct, finalPercent: nextFinalPct, reason: String(reason).trim() },
+    });
+
+    res.json({ ok: true, advancePercent: nextAdvPct, advanceAmountInr: newAdvInr, balanceAmountInr: newBalInr });
+  } catch {
+    res.status(500).json({ error: 'Failed to override project payment plan.' });
+  }
+});
+
+adminRouter.post('/projects/:id/request-final-payment', async (req: AuthRequest, res) => {
+  try {
+    const projectId = Number(req.params.id);
+    const [proj] = await db.select().from(projects).where(eq(projects.id, projectId)).limit(1);
+    if (!proj) return res.status(404).json({ error: 'Project not found.' });
+
+    const nextUpdates = [
+      ...(proj.updates || []),
+      {
+        id: `u-fin-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        author: req.dbUser!.email,
+        summary: `Project work completed. Final balance payment of ₹${proj.balanceAmountInr.toLocaleString('en-IN')} requested before handover.`,
+      },
+    ];
+
+    const [updated] = await db
+      .update(projects)
+      .set({
+        status: proj.balanceAmountInr > 0 ? 'Project Completed – Awaiting Final Payment' : 'Ready for Handover',
+        updates: nextUpdates,
+        updatedAt: new Date(),
+      })
+      .where(eq(projects.id, projectId))
+      .returning();
+
+    await db
+      .update(projectEnquiries)
+      .set({ status: updated.status, updatedAt: new Date() })
+      .where(eq(projectEnquiries.id, updated.enquiryId));
+
+    const [enq] = await db.select().from(projectEnquiries).where(eq(projectEnquiries.id, updated.enquiryId)).limit(1);
+    await createNotification({
+      userId: updated.userId,
+      title: `Final Payment Required — ${updated.projectCode}`,
+      message: `Project engineering is complete. Remaining balance ₹${updated.balanceAmountInr.toLocaleString('en-IN')} unlocks deliverable handover.`,
+      link: '/my-account/project-enquiries',
+    });
+
+    if (enq?.customerEmail && updated.balanceAmountInr > 0) {
+      await dispatchLifecycleEmail({
+        userId: updated.userId,
+        projectId: updated.id,
+        enquiryId: updated.enquiryId,
+        recipientEmail: enq.customerEmail,
+        eventType: 'project_ready_for_final_payment',
+        vars: {
+          customerName: enq.customerName,
+          projectCode: updated.projectCode,
+          balanceAmountInr: updated.balanceAmountInr,
+          finalPercent: 50,
+        },
+      });
+    }
+
+    await logAudit({
+      actorUid: req.dbUser!.uid,
+      actorEmail: req.dbUser!.email,
+      action: 'REQUEST_FINAL_PAYMENT',
+      entityType: 'project',
+      entityId: projectId,
+      details: { balanceAmountInr: updated.balanceAmountInr },
+    });
+
+    res.json({ project: updated });
+  } catch {
+    res.status(500).json({ error: 'Failed to mark project awaiting final payment.' });
+  }
+});
+
+adminRouter.post('/projects/:id/send-payment-reminder', async (req: AuthRequest, res) => {
+  try {
+    const projectId = Number(req.params.id);
+    const [proj] = await db.select().from(projects).where(eq(projects.id, projectId)).limit(1);
+    if (!proj) return res.status(404).json({ error: 'Project not found.' });
+
+    const [enq] = await db.select().from(projectEnquiries).where(eq(projectEnquiries.id, proj.enquiryId)).limit(1);
+    await createNotification({
+      userId: proj.userId,
+      title: `Payment Reminder — ${proj.projectCode}`,
+      message: `Pending balance: ₹${proj.balanceAmountInr.toLocaleString('en-IN')}. Complete payment in your dashboard.`,
+      link: '/my-account/project-enquiries',
+    });
+
+    const emailResult = enq?.customerEmail
+      ? await dispatchLifecycleEmail({
+          userId: proj.userId,
+          projectId: proj.id,
+          enquiryId: proj.enquiryId,
+          recipientEmail: enq.customerEmail,
+          eventType: 'final_payment_reminder',
+          vars: {
+            customerName: enq.customerName,
+            projectCode: proj.projectCode,
+            balanceAmountInr: proj.balanceAmountInr,
+          },
+        })
+      : null;
+
+    res.json({ ok: true, emailResult });
+  } catch {
+    res.status(500).json({ error: 'Failed to send payment reminder.' });
+  }
+});
+
+adminRouter.post('/projects/:id/authorize-handover-exception', requireAdmin(['super_admin']), async (req: AuthRequest, res) => {
+  try {
+    const projectId = Number(req.params.id);
+    const reason = String(req.body.reason || '').trim();
+    if (!reason) {
+      return res.status(400).json({ error: 'Mandatory audit reason is required to authorize a handover exception.' });
+    }
+
+    const [proj] = await db.select().from(projects).where(eq(projects.id, projectId)).limit(1);
+    if (!proj) return res.status(404).json({ error: 'Project not found.' });
+
+    const nowIso = new Date().toISOString();
+    const [updated] = await db
+      .update(projects)
+      .set({
+        handoverExceptionAuthorized: true,
+        handoverExceptionReason: reason,
+        handoverExceptionBy: req.dbUser!.email,
+        handoverExceptionAt: nowIso,
+        handoverUnlocked: true,
+        paymentClearanceStatus: proj.balanceAmountInr === 0 ? 'Cleared' : 'Override Authorized',
+        updatedAt: new Date(),
+      })
+      .where(eq(projects.id, projectId))
+      .returning();
+
+    await logAudit({
+      actorUid: req.dbUser!.uid,
+      actorEmail: req.dbUser!.email,
+      action: 'AUTHORIZE_HANDOVER_EXCEPTION',
+      entityType: 'project',
+      entityId: projectId,
+      details: { reason, balanceAmountInr: proj.balanceAmountInr },
+    });
+
+    res.json({ project: updated });
+  } catch {
+    res.status(500).json({ error: 'Failed to authorize handover exception.' });
+  }
+});
+
+adminRouter.post(
+  '/projects/:id/handover-documents',
+  handoverUpload.single('file'),
+  async (req: AuthRequest, res) => {
+    try {
+      const projectId = Number(req.params.id);
+      const [proj] = await db.select().from(projects).where(eq(projects.id, projectId)).limit(1);
+      if (!proj) return res.status(404).json({ error: 'Project not found.' });
+      if (!req.file) return res.status(400).json({ error: 'Deliverable file is required.' });
+
+      const [cfgRow] = await db
+        .select()
+        .from(siteSettings)
+        .where(eq(siteSettings.key, 'projectPaymentSettings'))
+        .limit(1);
+      const expiryDays = Number((cfgRow?.value as { handoverDownloadExpiryDays?: number })?.handoverDownloadExpiryDays || 30);
+      const expiresAt = new Date(Date.now() + expiryDays * 86400000);
+      const downloadToken = crypto.randomBytes(24).toString('hex');
+
+      const [doc] = await db
+        .insert(projectHandoverDocuments)
+        .values({
+          projectId,
+          userId: proj.userId,
+          title: String(req.body.title || req.file.originalname).trim(),
+          category: String(req.body.category || 'source_code').trim(),
+          fileName: req.file.originalname,
+          storagePath: path.relative(UPLOADS_ROOT, req.file.path),
+          fileSizeBytes: req.file.size,
+          versionLabel: String(req.body.versionLabel || 'v1.0').trim(),
+          notes: String(req.body.notes || '').trim(),
+          downloadToken,
+          tokenExpiresAt: expiresAt,
+          uploadedBy: req.dbUser!.email,
+        })
+        .returning();
+
+      const [enq] = await db.select().from(projectEnquiries).where(eq(projectEnquiries.id, proj.enquiryId)).limit(1);
+      await createNotification({
+        userId: proj.userId,
+        title: `Deliverable Uploaded — ${proj.projectCode}`,
+        message: `${doc.title} (${doc.versionLabel}) uploaded. ${
+          proj.handoverUnlocked ? 'Ready to download in your dashboard.' : 'Available once final balance payment is cleared.'
+        }`,
+        link: '/my-account/project-enquiries',
+      });
+
+      if (enq?.customerEmail && proj.handoverUnlocked) {
+        await dispatchLifecycleEmail({
+          userId: proj.userId,
+          projectId: proj.id,
+          enquiryId: proj.enquiryId,
+          recipientEmail: enq.customerEmail,
+          eventType: 'handover_ready',
+          vars: { customerName: enq.customerName, projectCode: proj.projectCode },
+        });
+      }
+
+      res.status(201).json({ document: doc });
+    } catch (error: any) {
+      res.status(400).json({ error: error?.message || 'Failed to upload handover document.' });
+    }
+  }
+);
+
+adminRouter.delete('/projects/:id/handover-documents/:docId', async (req: AuthRequest, res) => {
+  try {
+    const docId = Number(req.params.docId);
+    await db
+      .update(projectHandoverDocuments)
+      .set({ isDeleted: true })
+      .where(eq(projectHandoverDocuments.id, docId));
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ error: 'Failed to remove handover document.' });
+  }
+});
+
+adminRouter.post('/projects/:id/delivery', async (req: AuthRequest, res) => {
+  try {
+    const projectId = Number(req.params.id);
+    const [proj] = await db.select().from(projects).where(eq(projects.id, projectId)).limit(1);
+    if (!proj) return res.status(404).json({ error: 'Project not found.' });
+
+    const { courierName, trackingNumber, trackingUrl, dispatchDate, expectedDeliveryDate, actualDeliveryDate, dispatchNotes } = req.body;
+    const [record] = await db
+      .insert(projectDeliveryRecords)
+      .values({
+        projectId,
+        courierName: String(courierName || '').trim(),
+        trackingNumber: String(trackingNumber || '').trim(),
+        trackingUrl: String(trackingUrl || '').trim(),
+        dispatchDate: String(dispatchDate || new Date().toISOString().slice(0, 10)),
+        expectedDeliveryDate: String(expectedDeliveryDate || ''),
+        actualDeliveryDate: String(actualDeliveryDate || ''),
+        dispatchNotes: String(dispatchNotes || '').trim(),
+        updatedBy: req.dbUser!.email,
+      })
+      .returning();
+
+    const [updatedProj] = await db
+      .update(projects)
+      .set({
+        trackingCourier: record.courierName || proj.trackingCourier,
+        trackingId: record.trackingNumber || proj.trackingId,
+        trackingUrl: record.trackingUrl || proj.trackingUrl,
+        status: actualDeliveryDate ? 'Delivered' : 'Dispatched',
+        updatedAt: new Date(),
+      })
+      .where(eq(projects.id, projectId))
+      .returning();
+
+    const [enq] = await db.select().from(projectEnquiries).where(eq(projectEnquiries.id, proj.enquiryId)).limit(1);
+    if (enq?.customerEmail) {
+      await dispatchLifecycleEmail({
+        userId: proj.userId,
+        projectId: proj.id,
+        enquiryId: proj.enquiryId,
+        recipientEmail: enq.customerEmail,
+        eventType: 'project_dispatched',
+        vars: {
+          customerName: enq.customerName,
+          projectCode: proj.projectCode,
+          courierName: record.courierName,
+          trackingNumber: record.trackingNumber,
+        },
+      });
+    }
+
+    res.status(201).json({ deliveryRecord: record, project: updatedProj });
+  } catch {
+    res.status(500).json({ error: 'Failed to log project dispatch record.' });
+  }
+});
+
+adminRouter.get('/project-finance', async (req, res) => {
+  try {
+    const startDate = String(req.query.startDate || '').trim();
+    const endDate = String(req.query.endDate || '').trim();
+    const status = String(req.query.status || '').trim();
+    const paymentStatus = String(req.query.paymentStatus || '').trim();
+    const engineer = String(req.query.engineer || '').trim();
+    const search = String(req.query.search || '').trim().toLowerCase();
+
+    const [allProjects, allEnquiries, allQuotations, allPayments, allReceipts, allCerts] = await Promise.all([
+      db.select().from(projects).where(eq(projects.isDeleted, false)).orderBy(desc(projects.createdAt)),
+      db.select().from(projectEnquiries).where(eq(projectEnquiries.isDeleted, false)),
+      db.select().from(projectQuotations),
+      db.select().from(payments).where(eq(payments.entityType, 'project_quotation')),
+      db.select().from(paymentReceipts).where(eq(paymentReceipts.entityType, 'project_quotation')),
+      db.select().from(paymentClearanceCertificates),
+    ]);
+
+    const enqById = Object.fromEntries(allEnquiries.map((e) => [e.id, e]));
+    const qById = Object.fromEntries(allQuotations.map((q) => [q.id, q]));
+
+    const filtered = allProjects.filter((p) => {
+      const enq = enqById[p.enquiryId];
+      const created = new Date(p.createdAt).toISOString().slice(0, 10);
+      if (startDate && created < startDate) return false;
+      if (endDate && created > endDate) return false;
+      if (status && p.status !== status) return false;
+      if (paymentStatus && p.paymentClearanceStatus !== paymentStatus) return false;
+      if (engineer && p.assignedEngineer !== engineer) return false;
+      if (search) {
+        const hay = `${p.projectCode} ${p.title} ${enq?.customerName || ''} ${enq?.customerEmail || ''} ${enq?.enquiryNumber || ''}`.toLowerCase();
+        if (!hay.includes(search)) return false;
+      }
+      return true;
+    });
+
+    const totalQuotedInr = filtered.reduce((s, p) => s + p.totalAmountInr, 0);
+    const totalCollectedInr = filtered.reduce((s, p) => s + p.paidAmountInr, 0);
+    const totalOutstandingInr = filtered.reduce((s, p) => s + p.balanceAmountInr, 0);
+    const clearedProjectsCount = filtered.filter((p) => p.paymentClearanceStatus === 'Cleared').length;
+    const awaitingFinalCount = filtered.filter(
+      (p) => p.balanceAmountInr > 0 && p.status.includes('Awaiting Final Payment')
+    ).length;
+
+    const rows = filtered.map((p) => {
+      const enq = enqById[p.enquiryId] || null;
+      const quot = p.quotationId ? qById[p.quotationId] || null : null;
+      const cert = allCerts.find((c) => c.projectId === p.id) || null;
+      return {
+        ...p,
+        customerName: enq?.customerName || '',
+        customerEmail: enq?.customerEmail || '',
+        enquiryNumber: enq?.enquiryNumber || '',
+        quotationNumber: quot?.quotationNumber || '',
+        advancePercent: quot?.advancePercent ?? 50,
+        clearanceCertificate: cert,
+      };
+    });
+
+    res.json({
+      summary: {
+        projectCount: filtered.length,
+        totalQuotedInr,
+        totalCollectedInr,
+        totalOutstandingInr,
+        clearedProjectsCount,
+        awaitingFinalCount,
+      },
+      projects: rows,
+      payments: allPayments,
+      receipts: allReceipts,
+      clearanceCertificates: allCerts,
+    });
+  } catch (error) {
+    console.error('Project finance error:', error);
+    res.status(500).json({ error: 'Failed to load project finance data.' });
+  }
+});
+
+adminRouter.get('/export/project-finance', async (_req, res) => {
+  try {
+    const [allProjects, allEnquiries] = await Promise.all([
+      db.select().from(projects).where(eq(projects.isDeleted, false)).orderBy(desc(projects.createdAt)),
+      db.select().from(projectEnquiries),
+    ]);
+    const enqById = Object.fromEntries(allEnquiries.map((e) => [e.id, e]));
+    const csv = toCsv(
+      ['Project Code', 'Title', 'Customer', 'Email', 'Engineer', 'Total INR', 'Paid INR', 'Balance INR', 'Clearance Status', 'Project Status', 'Completion Cert'],
+      allProjects.map((p) => {
+        const enq = enqById[p.enquiryId];
+        return [
+          p.projectCode,
+          p.title,
+          enq?.customerName || '',
+          enq?.customerEmail || '',
+          p.assignedEngineer,
+          p.totalAmountInr,
+          p.paidAmountInr,
+          p.balanceAmountInr,
+          p.paymentClearanceStatus,
+          p.status,
+          p.completionCertificateNumber || '',
+        ];
+      })
+    );
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="nexustekfusion-project-finance.csv"');
+    res.send(csv);
+  } catch {
+    res.status(500).json({ error: 'Failed to export project finance CSV.' });
+  }
+});
+
+adminRouter.patch('/drone-repairs/:id', async (req: AuthRequest, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { status, assignedEngineer, inspectionChargeInr, repairQuotationInr, repairQuotationNotes, adminNotes } = req.body;
+    const [existing] = await db.select().from(droneRepairBookings).where(eq(droneRepairBookings.id, id)).limit(1);
+    if (!existing) return res.status(404).json({ error: 'Drone repair booking not found.' });
+
+    const nextHistory = [
+      ...(existing.statusHistory || []),
+      {
+        status: status || existing.status,
+        timestamp: new Date().toISOString(),
+        note: adminNotes || repairQuotationNotes || `Updated by ${req.dbUser!.email}`,
+        actor: req.dbUser!.email,
+      },
+    ];
+
+    const [updated] = await db
+      .update(droneRepairBookings)
+      .set({
+        status: status ?? existing.status,
+        assignedEngineer: assignedEngineer ?? existing.assignedEngineer,
+        inspectionChargeInr: inspectionChargeInr !== undefined ? Number(inspectionChargeInr) : existing.inspectionChargeInr,
+        repairQuotationInr: repairQuotationInr !== undefined ? Number(repairQuotationInr) : existing.repairQuotationInr,
+        repairQuotationNotes: repairQuotationNotes ?? existing.repairQuotationNotes,
+        adminNotes: adminNotes ?? existing.adminNotes,
+        statusHistory: nextHistory,
+        updatedAt: new Date(),
+      })
+      .where(eq(droneRepairBookings.id, id))
+      .returning();
+
+    res.json({ booking: updated });
+  } catch {
+    res.status(500).json({ error: 'Failed to update drone repair booking.' });
   }
 });

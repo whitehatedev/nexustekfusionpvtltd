@@ -8,7 +8,18 @@ import { auditLogs, notifications } from '../db/schema.ts';
 export const UPLOADS_ROOT = path.resolve(process.cwd(), 'uploads');
 
 export function ensureUploadDirs() {
-  for (const sub of ['3d-models', 'projects', 'pcb', 'b2b', 'support', 'media', 'drone-repairs']) {
+  for (const sub of [
+    '3d-models',
+    'projects',
+    'projects-handover',
+    'pcb',
+    'b2b',
+    'support',
+    'media',
+    'drone-repairs',
+    'krashivantri-kyc',
+    'krashivantri-evidence',
+  ]) {
     const dir = path.join(UPLOADS_ROOT, sub);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
@@ -47,9 +58,45 @@ export function createUploadMiddleware(subfolder: string, allowedExts: string[],
 }
 
 export function generateCode(prefix: string): string {
-  const datePart = new Date().toISOString().slice(2, 10).replace(/-/g, '');
-  const randPart = crypto.randomBytes(2).toString('hex').toUpperCase();
-  return `${prefix}-${datePart}-${randPart}`;
+  const year = new Date().getFullYear();
+  const randNum = String(crypto.randomInt(10000, 99999));
+  return `${prefix}-${year}-${randNum}`;
+}
+
+export function maskAccountNumber(accNo: string): string {
+  const clean = accNo.replace(/\s+/g, '');
+  if (clean.length <= 4) return '••••';
+  return `${'•'.repeat(Math.max(4, clean.length - 4))}${clean.slice(-4)}`;
+}
+
+export function haversineDistanceMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371000;
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+export function isPointInPolygon(
+  lat: number,
+  lng: number,
+  polygon: Array<{ lat: number; lng: number }>
+): boolean {
+  if (!Array.isArray(polygon) || polygon.length < 3) return false;
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const xi = polygon[i].lat;
+    const yi = polygon[i].lng;
+    const xj = polygon[j].lat;
+    const yj = polygon[j].lng;
+    const intersect = yi > lng !== yj > lng && lat < ((xj - xi) * (lng - yi)) / (yj - yi + 1e-12) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
 }
 
 export async function logAudit(params: {

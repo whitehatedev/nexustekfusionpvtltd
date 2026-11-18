@@ -43,6 +43,12 @@ import {
   downloadPackingSlipPdf,
   downloadQuotationPdf,
 } from '../lib/pdf';
+import {
+  ProjectFinanceDashboardPanel,
+  ProjectHandoverControlsPanel,
+  ProjectPaymentSettingsPanel,
+} from '../components/admin/ProjectPaymentsAndFinancePanel';
+import { KrashivantriAdminWorkspace } from '../components/admin/KrashivantriAdminPanels';
 
 const COMPANY_LOGO = '/assets/aistudio/image_1a5ac752.png';
 
@@ -57,6 +63,8 @@ export type AdminTab =
   | 'store_orders'
   | 'coupons'
   | 'projects'
+  | 'project_finance'
+  | 'project_payment_settings'
   | 'printing'
   | 'pcb_b2b'
   | 'crm'
@@ -67,6 +75,14 @@ export type AdminTab =
   | 'users'
   | 'settings'
   | 'audit'
+  | 'krash_farmers'
+  | 'krash_pilots'
+  | 'krash_live_tracking'
+  | 'krash_orders_live'
+  | 'krash_farmer_payments'
+  | 'krash_pilot_payouts'
+  | 'krash_penalties'
+  | 'krash_finance'
   // legacy tab aliases mapped gracefully
   | 'store'
   | 'cms'
@@ -77,7 +93,7 @@ function normalizeTab(t?: AdminTab): AdminTab {
   if (!t) return 'overview';
   if (t === 'store') return 'store_products';
   if (t === 'cms') return 'website_cms';
-  if (t === 'project_settings') return 'settings';
+  if (t === 'project_settings') return 'project_payment_settings';
   if (t === 'payment_settings') return 'payments_invoices';
   return t;
 }
@@ -388,9 +404,16 @@ export const AdminDashboardPage: React.FC<{ initialTab?: AdminTab }> = ({ initia
   const [uploadingMedia, setUploadingMedia] = useState(false);
 
   // CMS & KRASHIVANTRI & Menus & Services & Settings
-  const [navMenus, setNavMenus] = useState<Array<{ id: string; label: string; to: string; visible: boolean; sortOrder: number }>>(
-    () => settings.navigationMenus?.header || []
-  );
+  const [navMenus, setNavMenus] = useState<
+    Array<{
+      id: string;
+      label: string;
+      to: string;
+      visible: boolean;
+      sortOrder: number;
+      children?: Array<{ id: string; label: string; to: string }>;
+    }>
+  >(() => settings.navigationMenus?.header || []);
   const [servicesCatalog, setServicesCatalog] = useState<Array<{ slug: string; title: string; shortDesc: string; visible: boolean; imageUrl?: string; ctaLabel?: string }>>(
     () => settings.servicesCatalog || []
   );
@@ -834,8 +857,23 @@ export const AdminDashboardPage: React.FC<{ initialTab?: AdminTab }> = ({ initia
       group: 'Engineering & Lab',
       items: [
         { id: 'projects', label: 'Projects & Quotations', icon: <Wrench className="w-4 h-4" /> },
+        { id: 'project_finance', label: 'Project Finance & Dues', icon: <CreditCard className="w-4 h-4" /> },
+        { id: 'project_payment_settings', label: 'Project Split & Emails', icon: <Settings className="w-4 h-4" /> },
         { id: 'printing', label: '3D Printing Lab', icon: <Printer className="w-4 h-4" /> },
         { id: 'pcb_b2b', label: 'PCB & B2B Quotes', icon: <Cpu className="w-4 h-4" /> },
+      ],
+    },
+    {
+      group: 'KRASHIVANTRI Drone Ops',
+      items: [
+        { id: 'krash_farmers', label: 'Farmers & Farms KYC', icon: <Users className="w-4 h-4" /> },
+        { id: 'krash_pilots', label: 'Drone Pilots & Drones', icon: <ShieldCheck className="w-4 h-4" /> },
+        { id: 'krash_live_tracking', label: 'Live GPS Tracking', icon: <Globe className="w-4 h-4" /> },
+        { id: 'krash_orders_live', label: 'Bookings & Dispatch', icon: <Send className="w-4 h-4" /> },
+        { id: 'krash_farmer_payments', label: 'Farmer Payments & Refunds', icon: <CreditCard className="w-4 h-4" /> },
+        { id: 'krash_pilot_payouts', label: 'Pilot Payouts', icon: <Briefcase className="w-4 h-4" /> },
+        { id: 'krash_penalties', label: 'Penalties & Appeals', icon: <AlertTriangle className="w-4 h-4" /> },
+        { id: 'krash_finance', label: 'Ops Finance & Config', icon: <FileSpreadsheet className="w-4 h-4" /> },
       ],
     },
     {
@@ -845,7 +883,7 @@ export const AdminDashboardPage: React.FC<{ initialTab?: AdminTab }> = ({ initia
         { id: 'rd_projects', label: 'R&D Case Studies', icon: <FileText className="w-4 h-4" /> },
         { id: 'blogs', label: 'Engineering Blogs', icon: <FileText className="w-4 h-4" /> },
         { id: 'payments_invoices', label: 'Payments & Razorpay', icon: <CreditCard className="w-4 h-4" /> },
-        { id: 'support', label: 'Support Tickets', icon: <MessageSquare className="w-4 h-4" /> },
+        { id: 'support', label: 'Support & Drone Repairs', icon: <MessageSquare className="w-4 h-4" /> },
       ],
     },
     {
@@ -1159,42 +1197,124 @@ export const AdminDashboardPage: React.FC<{ initialTab?: AdminTab }> = ({ initia
                         <Plus className="w-3.5 h-3.5" /> Add Link
                       </button>
                     </div>
-                    <div className="space-y-2">
+                    <div className="space-y-3">
                       {navMenus.map((m, idx) => (
-                        <div key={m.id} className="grid grid-cols-12 gap-2 items-center">
-                          <input
-                            value={m.label}
-                            onChange={(e) =>
-                              setNavMenus(navMenus.map((x, i) => (i === idx ? { ...x, label: e.target.value } : x)))
-                            }
-                            placeholder="Label"
-                            className="col-span-4 rounded border border-slate-300 px-2.5 py-1.5"
-                          />
-                          <input
-                            value={m.to}
-                            onChange={(e) =>
-                              setNavMenus(navMenus.map((x, i) => (i === idx ? { ...x, to: e.target.value } : x)))
-                            }
-                            placeholder="/path"
-                            className="col-span-5 rounded border border-slate-300 px-2.5 py-1.5 font-mono"
-                          />
-                          <label className="col-span-2 flex items-center gap-1 text-[11px]">
+                        <div key={m.id} className="rounded-lg border border-slate-200 p-2.5 space-y-2 bg-slate-50/50">
+                          <div className="grid grid-cols-12 gap-2 items-center">
                             <input
-                              type="checkbox"
-                              checked={m.visible}
+                              value={m.label}
                               onChange={(e) =>
-                                setNavMenus(navMenus.map((x, i) => (i === idx ? { ...x, visible: e.target.checked } : x)))
+                                setNavMenus(navMenus.map((x, i) => (i === idx ? { ...x, label: e.target.value } : x)))
                               }
+                              placeholder="Label"
+                              className="col-span-4 rounded border border-slate-300 bg-white px-2.5 py-1.5"
                             />
-                            Show
-                          </label>
-                          <button
-                            type="button"
-                            onClick={() => setNavMenus(navMenus.filter((_, i) => i !== idx))}
-                            className="col-span-1 text-red-600 p-1"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                            <input
+                              value={m.to}
+                              onChange={(e) =>
+                                setNavMenus(navMenus.map((x, i) => (i === idx ? { ...x, to: e.target.value } : x)))
+                              }
+                              placeholder="/path"
+                              className="col-span-5 rounded border border-slate-300 bg-white px-2.5 py-1.5 font-mono"
+                            />
+                            <label className="col-span-2 flex items-center gap-1 text-[11px]">
+                              <input
+                                type="checkbox"
+                                checked={m.visible}
+                                onChange={(e) =>
+                                  setNavMenus(navMenus.map((x, i) => (i === idx ? { ...x, visible: e.target.checked } : x)))
+                                }
+                              />
+                              Show
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => setNavMenus(navMenus.filter((_, i) => i !== idx))}
+                              className="col-span-1 text-red-600 p-1"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                          <div className="pl-3 space-y-1">
+                            {(m.children || []).map((ch, cIdx) => (
+                              <div key={ch.id || cIdx} className="grid grid-cols-12 gap-2 items-center">
+                                <input
+                                  value={ch.label}
+                                  onChange={(e) =>
+                                    setNavMenus(
+                                      navMenus.map((x, i) =>
+                                        i === idx
+                                          ? {
+                                              ...x,
+                                              children: (x.children || []).map((c, j) =>
+                                                j === cIdx ? { ...c, label: e.target.value } : c
+                                              ),
+                                            }
+                                          : x
+                                      )
+                                    )
+                                  }
+                                  placeholder="Submenu label"
+                                  className="col-span-5 rounded border border-slate-200 bg-white px-2 py-1 text-[11px]"
+                                />
+                                <input
+                                  value={ch.to}
+                                  onChange={(e) =>
+                                    setNavMenus(
+                                      navMenus.map((x, i) =>
+                                        i === idx
+                                          ? {
+                                              ...x,
+                                              children: (x.children || []).map((c, j) =>
+                                                j === cIdx ? { ...c, to: e.target.value } : c
+                                              ),
+                                            }
+                                          : x
+                                      )
+                                    )
+                                  }
+                                  placeholder="/subpath"
+                                  className="col-span-6 rounded border border-slate-200 bg-white px-2 py-1 text-[11px] font-mono"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setNavMenus(
+                                      navMenus.map((x, i) =>
+                                        i === idx
+                                          ? { ...x, children: (x.children || []).filter((_, j) => j !== cIdx) }
+                                          : x
+                                      )
+                                    )
+                                  }
+                                  className="col-span-1 text-red-600 p-0.5"
+                                >
+                                  <X className="w-3 h-3" />
+                                </button>
+                              </div>
+                            ))}
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setNavMenus(
+                                  navMenus.map((x, i) =>
+                                    i === idx
+                                      ? {
+                                          ...x,
+                                          children: [
+                                            ...(x.children || []),
+                                            { id: `sub_${Date.now()}`, label: 'Sub-item', to: x.to },
+                                          ],
+                                        }
+                                      : x
+                                  )
+                                )
+                              }
+                              className="text-[11px] font-semibold text-blue-700 hover:underline"
+                            >
+                              + Add Dropdown Item
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -2866,25 +2986,77 @@ export const AdminDashboardPage: React.FC<{ initialTab?: AdminTab }> = ({ initia
                   );
                 })()}
 
-                <div className="space-y-3">
-                  <h2 className="font-display text-xl font-bold text-[#0B1B3B]">Active Projects</h2>
-                  {overview.projects.map((p: any) => (
-                    <div key={p.id} className="rounded-xl border border-slate-200 bg-white p-5 flex flex-wrap justify-between items-center gap-3">
-                      <div>
-                        <span className="font-mono font-bold text-[#0B1B3B]">{p.projectCode}</span> — {p.title}
-                        <div className="text-[11px] text-slate-500">Engineer: {p.assignedEngineer || 'Unassigned'}</div>
+                <div className="space-y-4">
+                  <h2 className="font-display text-xl font-bold text-[#0B1B3B]">
+                    Active Projects, Final Balance &amp; Deliverable Handover
+                  </h2>
+                  {overview.projects.map((p: any) => {
+                    const enq = (overview.projectEnquiries || []).find((e: any) => e.id === p.enquiryId);
+                    const quot = (overview.quotations || []).find((q: any) => q.id === p.quotationId);
+                    const milestones = (overview.projectPaymentMilestones || []).filter(
+                      (m: any) => m.projectId === p.id || (p.quotationId && m.quotationId === p.quotationId)
+                    );
+                    const receipts = (overview.receipts || []).filter(
+                      (r: any) => r.entityType === 'project_quotation' && r.entityId === p.quotationId
+                    );
+                    const clearanceCert = (overview.clearanceCertificates || []).find(
+                      (c: any) => c.projectId === p.id
+                    );
+                    const workOrder = (overview.workOrders || []).find((w: any) => w.projectId === p.id);
+                    const handoverDocs = (overview.handoverDocuments || []).filter((d: any) => d.projectId === p.id);
+                    const deliveryRecords = (overview.deliveryRecords || []).filter((d: any) => d.projectId === p.id);
+
+                    return (
+                      <div key={p.id} className="rounded-xl border border-slate-200 bg-white p-5 space-y-3">
+                        <div className="flex flex-wrap justify-between items-center gap-3">
+                          <div>
+                            <span className="font-mono font-bold text-[#0B1B3B]">{p.projectCode}</span> — {p.title}
+                            <div className="text-[11px] text-slate-500">
+                              Client: {enq?.customerName || '—'} ({enq?.customerEmail || ''}) · Engineer:{' '}
+                              {p.assignedEngineer || 'Unassigned'}
+                            </div>
+                          </div>
+                          <select
+                            value={p.status}
+                            onChange={(e) =>
+                              handleUpdateOrderTracking(`/api/admin/projects/${p.id}`, { status: e.target.value })
+                            }
+                            className="rounded-lg border border-slate-300 px-3 py-1.5 bg-white font-semibold"
+                          >
+                            {[
+                              'Project Started',
+                              'In Progress',
+                              'Testing',
+                              'Project Completed – Awaiting Final Payment',
+                              'Payment Cleared – Ready for Handover',
+                              'Ready for Delivery',
+                              'Dispatched',
+                              'Delivered',
+                              'Completed',
+                            ].map((s) => (
+                              <option key={s} value={s}>
+                                {s}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <ProjectHandoverControlsPanel
+                          project={p}
+                          customerEmail={enq?.customerEmail || ''}
+                          quotation={quot}
+                          milestones={milestones}
+                          receipts={receipts}
+                          clearanceCert={clearanceCert}
+                          workOrder={workOrder}
+                          handoverDocs={handoverDocs}
+                          deliveryRecords={deliveryRecords}
+                          isSuperAdmin={dbUser?.role === 'super_admin'}
+                          onRefresh={loadAll}
+                        />
                       </div>
-                      <select
-                        value={p.status}
-                        onChange={(e) => handleUpdateOrderTracking(`/api/admin/projects/${p.id}`, { status: e.target.value })}
-                        className="rounded-lg border border-slate-300 px-3 py-1.5 bg-white font-semibold"
-                      >
-                        {['Project Started', 'In Progress', 'Testing', 'Ready for Delivery', 'Dispatched', 'Completed'].map((s) => (
-                          <option key={s} value={s}>{s}</option>
-                        ))}
-                      </select>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -3693,43 +3865,128 @@ export const AdminDashboardPage: React.FC<{ initialTab?: AdminTab }> = ({ initia
               </div>
             )}
 
-            {/* ==================== SUPPORT DESK ==================== */}
+            {/* ==================== SUPPORT DESK & DRONE REPAIRS ==================== */}
             {tab === 'support' && (
-              <div className="space-y-4 text-xs">
-                {overview.supportTickets.map((t: any) => (
-                  <div key={t.id} className="rounded-xl border border-slate-200 bg-white p-5 space-y-3">
-                    <div className="flex justify-between font-semibold">
-                      <span className="text-[#0B1B3B]">{t.ticketNumber} · {t.subject} ({t.email})</span>
-                      <span className="text-blue-700">{t.status}</span>
-                    </div>
-                    <p className="text-slate-600">{t.message}</p>
-                    <div className="flex flex-wrap gap-2">
-                      <input
-                        placeholder="Write reply to customer..."
-                        value={ticketReplyMap[t.id] || ''}
-                        onChange={(e) => setTicketReplyMap({ ...ticketReplyMap, [t.id]: e.target.value })}
-                        className="flex-1 min-w-[220px] rounded-lg border border-slate-300 px-3 py-1.5"
-                      />
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          const reply = (ticketReplyMap[t.id] || '').trim();
-                          if (!reply) return notify('Please enter a reply message.', 'error');
-                          await apiFetch(`/api/admin/support-tickets/${t.id}/reply`, {
-                            method: 'POST',
-                            body: JSON.stringify({ message: reply, status: 'Replied' }),
-                          });
-                          setTicketReplyMap({ ...ticketReplyMap, [t.id]: '' });
-                          notify('Reply sent.', 'success');
-                          loadAll();
-                        }}
-                        className="px-4 py-1.5 bg-[#0B1B3B] text-white rounded-lg font-semibold"
-                      >
-                        Send Reply
-                      </button>
-                    </div>
+              <div className="space-y-6 text-xs">
+                {(overview.droneRepairs || []).length > 0 && (
+                  <div className="space-y-3">
+                    <h2 className="font-display text-lg font-bold text-[#0B1B3B]">
+                      Drone Repair Service Bookings ({overview.droneRepairs.length})
+                    </h2>
+                    {overview.droneRepairs.map((dr: any) => (
+                      <div key={dr.id} className="rounded-xl border border-slate-200 bg-white p-5 space-y-3">
+                        <div className="flex flex-wrap justify-between gap-2 border-b border-slate-100 pb-2">
+                          <div>
+                            <span className="font-mono font-bold text-[#0B1B3B]">{dr.referenceNumber}</span> ·{' '}
+                            {dr.droneBrandModel} ({dr.serviceMode})
+                            <div className="text-slate-500">
+                              {dr.customerName} · {dr.mobile} · {dr.city}
+                            </div>
+                          </div>
+                          <select
+                            value={dr.status}
+                            onChange={async (e) => {
+                              await apiFetch(`/api/admin/drone-repairs/${dr.id}`, {
+                                method: 'PATCH',
+                                body: JSON.stringify({ status: e.target.value }),
+                              });
+                              notify('Repair status updated.', 'success');
+                              loadAll();
+                            }}
+                            className="rounded border border-slate-300 px-2.5 py-1 bg-white font-semibold"
+                          >
+                            {[
+                              'Booking received',
+                              'Engineer assigned',
+                              'Diagnostics ongoing',
+                              'Quotation sent',
+                              'Approved & Repairing',
+                              'Testing completed',
+                              'Ready for dispatch / pickup',
+                              'Completed',
+                            ].map((st) => (
+                              <option key={st} value={st}>
+                                {st}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <p className="text-slate-700">{dr.problemDescription}</p>
+                        <div className="flex flex-wrap gap-2 items-center">
+                          <input
+                            type="number"
+                            placeholder="Repair quote ₹"
+                            defaultValue={dr.repairQuotationInr || ''}
+                            onBlur={async (e) => {
+                              if (!e.target.value) return;
+                              await apiFetch(`/api/admin/drone-repairs/${dr.id}`, {
+                                method: 'PATCH',
+                                body: JSON.stringify({ repairQuotationInr: Number(e.target.value), status: 'Quotation sent' }),
+                              });
+                              notify('Repair quote saved.', 'success');
+                              loadAll();
+                            }}
+                            className="w-36 rounded border border-slate-300 px-2.5 py-1 font-mono"
+                          />
+                          <input
+                            placeholder="Assigned technician..."
+                            defaultValue={dr.assignedEngineer || ''}
+                            onBlur={async (e) => {
+                              await apiFetch(`/api/admin/drone-repairs/${dr.id}`, {
+                                method: 'PATCH',
+                                body: JSON.stringify({ assignedEngineer: e.target.value }),
+                              });
+                              loadAll();
+                            }}
+                            className="w-48 rounded border border-slate-300 px-2.5 py-1"
+                          />
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                ))}
+                )}
+
+                <div className="space-y-3">
+                  <h2 className="font-display text-lg font-bold text-[#0B1B3B]">
+                    Customer Support Tickets ({(overview.supportTickets || []).length})
+                  </h2>
+                  {overview.supportTickets.map((t: any) => (
+                    <div key={t.id} className="rounded-xl border border-slate-200 bg-white p-5 space-y-3">
+                      <div className="flex justify-between font-semibold">
+                        <span className="text-[#0B1B3B]">
+                          {t.ticketNumber} · {t.subject} ({t.email})
+                        </span>
+                        <span className="text-blue-700">{t.status}</span>
+                      </div>
+                      <p className="text-slate-600">{t.message}</p>
+                      <div className="flex flex-wrap gap-2">
+                        <input
+                          placeholder="Write reply to customer..."
+                          value={ticketReplyMap[t.id] || ''}
+                          onChange={(e) => setTicketReplyMap({ ...ticketReplyMap, [t.id]: e.target.value })}
+                          className="flex-1 min-w-[220px] rounded-lg border border-slate-300 px-3 py-1.5"
+                        />
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const reply = (ticketReplyMap[t.id] || '').trim();
+                            if (!reply) return notify('Please enter a reply message.', 'error');
+                            await apiFetch(`/api/admin/support-tickets/${t.id}/reply`, {
+                              method: 'POST',
+                              body: JSON.stringify({ message: reply, status: 'Replied' }),
+                            });
+                            setTicketReplyMap({ ...ticketReplyMap, [t.id]: '' });
+                            notify('Reply sent.', 'success');
+                            loadAll();
+                          }}
+                          className="px-4 py-1.5 bg-[#0B1B3B] text-white rounded-lg font-semibold"
+                        >
+                          Send Reply
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -4012,6 +4269,42 @@ export const AdminDashboardPage: React.FC<{ initialTab?: AdminTab }> = ({ initia
                   </div>
                 ))}
               </div>
+            )}
+            {/* ==================== PROJECT FINANCE DASHBOARD ==================== */}
+            {tab === 'project_finance' && <ProjectFinanceDashboardPanel />}
+
+            {/* ==================== PROJECT PAYMENT SPLIT & EMAIL TEMPLATES ==================== */}
+            {tab === 'project_payment_settings' && (
+              <ProjectPaymentSettingsPanel
+                isSuperAdmin={dbUser?.role === 'super_admin'}
+                emailLogs={overview.emailNotifications || []}
+              />
+            )}
+
+            {/* ==================== KRASHIVANTRI OPERATIONS ADMIN CONSOLES ==================== */}
+            {tab === 'krash_farmers' && (
+              <KrashivantriAdminWorkspace section="farmers" isSuperAdmin={dbUser?.role === 'super_admin'} />
+            )}
+            {tab === 'krash_pilots' && (
+              <KrashivantriAdminWorkspace section="pilots" isSuperAdmin={dbUser?.role === 'super_admin'} />
+            )}
+            {tab === 'krash_live_tracking' && (
+              <KrashivantriAdminWorkspace section="live_tracking" isSuperAdmin={dbUser?.role === 'super_admin'} />
+            )}
+            {tab === 'krash_orders_live' && (
+              <KrashivantriAdminWorkspace section="orders_live" isSuperAdmin={dbUser?.role === 'super_admin'} />
+            )}
+            {tab === 'krash_farmer_payments' && (
+              <KrashivantriAdminWorkspace section="farmer_payments" isSuperAdmin={dbUser?.role === 'super_admin'} />
+            )}
+            {tab === 'krash_pilot_payouts' && (
+              <KrashivantriAdminWorkspace section="pilot_payouts" isSuperAdmin={dbUser?.role === 'super_admin'} />
+            )}
+            {tab === 'krash_penalties' && (
+              <KrashivantriAdminWorkspace section="penalties" isSuperAdmin={dbUser?.role === 'super_admin'} />
+            )}
+            {tab === 'krash_finance' && (
+              <KrashivantriAdminWorkspace section="finance" isSuperAdmin={dbUser?.role === 'super_admin'} />
             )}
           </div>
         )}

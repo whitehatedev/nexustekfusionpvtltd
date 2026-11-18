@@ -155,10 +155,41 @@ export const DEFAULT_HOMEPAGE_SECTIONS = [
   },
 ];
 
+import { DEFAULT_PROJECT_EMAIL_TEMPLATES } from './email.ts';
+
 export const DEFAULT_NAVIGATION_MENUS = {
   header: [
-    { id: 'krashivantri', label: 'KRASHIVANTRI', to: '/krashivantri', visible: true, sortOrder: 1 },
-    { id: 'services', label: 'Services', to: '/services', visible: true, sortOrder: 2 },
+    {
+      id: 'krashivantri',
+      label: 'KRASHIVANTRI',
+      to: '/krashivantri',
+      visible: true,
+      sortOrder: 1,
+      children: [
+        { id: 'krash-overview', label: 'KRASHIVANTRI Drones', to: '/krashivantri' },
+        { id: 'krash-x', label: 'KRASHIVANTRI X', to: '/product/krashivantri-x' },
+        { id: 'krash-x-pro', label: 'KRASHIVANTRI X PRO', to: '/product/krashivantri-x-pro' },
+        { id: 'krash-farmer', label: 'Farmer Spraying Portal', to: '/krashivantri/farmer-portal' },
+        { id: 'krash-pilot', label: 'Drone Pilot Portal', to: '/krashivantri/pilot-portal' },
+      ],
+    },
+    {
+      id: 'services',
+      label: 'Services',
+      to: '/services',
+      visible: true,
+      sortOrder: 2,
+      children: [
+        { id: 'svc-all', label: 'All Engineering Services', to: '/services' },
+        { id: 'svc-drone', label: 'Drone Development & UAVs', to: '/services/drone-development' },
+        { id: 'svc-repair', label: 'Drone Repair & Service', to: '/services/drone-repair' },
+        { id: 'svc-pcb', label: 'PCB Design & Fabrication', to: '/services/pcb-design' },
+        { id: 'svc-3dp', label: 'Custom 3D Printing', to: '/services/3d-printing' },
+        { id: 'svc-robotics', label: 'Robotics & Automation', to: '/services/robotics' },
+        { id: 'svc-iot', label: 'IoT & Embedded Systems', to: '/services/iot-embedded' },
+        { id: 'svc-aiml', label: 'AI & Machine Learning', to: '/services/ai-ml' },
+      ],
+    },
     { id: 'printing', label: '3D Printing', to: '/services/3d-printing', visible: true, sortOrder: 3 },
     { id: 'shop', label: 'Shop', to: '/shop', visible: true, sortOrder: 4 },
     { id: 'projects', label: 'Projects', to: '/projects', visible: true, sortOrder: 5 },
@@ -231,6 +262,38 @@ export const DEFAULT_SITE_SETTINGS: Record<string, unknown> = {
     defaultGstPercent: 18,
     defaultAdvancePercent: 50,
     quotationValidityDays: 15,
+  },
+  projectPaymentSettings: {
+    defaultPlanType: '50_50_split',
+    advancePercent: 50,
+    finalPercent: 50,
+    allowFullPayment: true,
+    enableGstTax: false,
+    gstPercent: 18,
+    quotationValidityDays: 15,
+    quotationPrefix: 'NTF-QTN',
+    projectPrefix: 'NTF-PRJ',
+    paymentPrefix: 'NTF-PAY',
+    invoicePrefix: 'NTF-INV',
+    receiptPrefix: 'NTF-RCP',
+    clearancePrefix: 'NTF-CLR',
+    workOrderPrefix: 'NTF-WRK',
+    handoverDownloadExpiryDays: 30,
+    reminderIntervalsDays: [3, 7, 14],
+    allowHandoverExceptionBySuperAdmin: true,
+    cancellationRefundPolicy:
+      'Advance covers procurement and engineering mobilization; custom milestone refunds are reviewed case-by-case by Super Admin.',
+  },
+  projectEmailTemplates: DEFAULT_PROJECT_EMAIL_TEMPLATES,
+  krashivantriOpsConfig: {
+    baseRatePerAcreInr: 500,
+    minimumBookingAcres: 1,
+    platformCommissionPercent: 15,
+    gpsStaleThresholdMinutes: 10,
+    arrivalGeofenceMeters: 250,
+    pilotResponseTimeoutMinutes: 30,
+    cancellationBeforeDispatchRefundPercent: 100,
+    lateArrivalPenaltyInr: 200,
   },
   homepageLayout: {
     draft: DEFAULT_HOMEPAGE_SECTIONS,

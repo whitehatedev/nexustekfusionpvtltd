@@ -379,6 +379,7 @@ export const projectQuotations = pgTable('project_quotations', {
   enquiryId: integer('enquiry_id')
     .references(() => projectEnquiries.id, { onDelete: 'cascade' })
     .notNull(),
+  quotationNumber: text('quotation_number').default('').notNull(),
   revisionNumber: integer('revision_number').default(1).notNull(),
   items: jsonb('items')
     .$type<Array<{ name: string; description: string; qty: number; unitPriceInr: number }>>()
@@ -393,9 +394,12 @@ export const projectQuotations = pgTable('project_quotations', {
   discountInr: integer('discount_inr').default(0).notNull(),
   gstInr: integer('gst_inr').default(0).notNull(),
   totalAmountInr: integer('total_amount_inr').notNull(),
+  totalAmountPaise: integer('total_amount_paise').default(0).notNull(),
   advancePercent: integer('advance_percent').default(50).notNull(),
   advanceAmountInr: integer('advance_amount_inr').notNull(),
+  advanceAmountPaise: integer('advance_amount_paise').default(0).notNull(),
   balanceAmountInr: integer('balance_amount_inr').notNull(),
+  balanceAmountPaise: integer('balance_amount_paise').default(0).notNull(),
   costCategories: jsonb('cost_categories')
     .$type<{
       development: number;
@@ -430,11 +434,17 @@ export const projectQuotations = pgTable('project_quotations', {
       other: 0,
     })
     .notNull(),
+  technicalScope: text('technical_scope').default('').notNull(),
   validityDays: integer('validity_days').default(15).notNull(),
   estimatedDuration: text('estimated_duration').default('').notNull(),
   paymentTerms: text('payment_terms').default('50% Advance, 50% Balance before Dispatch').notNull(),
+  paymentDueDate: text('payment_due_date').default('').notNull(),
   termsAndConditions: text('terms_and_conditions').default('').notNull(),
+  allowFullPayment: boolean('allow_full_payment').default(true).notNull(),
+  planOverrideReason: text('plan_override_reason').default('').notNull(),
+  planOverrideBy: text('plan_override_by').default('').notNull(),
   paidAmountInr: integer('paid_amount_inr').default(0).notNull(),
+  paidAmountPaise: integer('paid_amount_paise').default(0).notNull(),
   status: text('status').default('Sent').notNull(), // Draft | Sent | Accepted | Modification Requested | Rejected
   customerFeedback: text('customer_feedback').default('').notNull(),
   razorpayOrderId: text('razorpay_order_id').default('').notNull(),
@@ -457,6 +467,22 @@ export const projects = pgTable('projects', {
   title: text('title').notNull(),
   assignedEngineer: text('assigned_engineer').default('Engineering Team').notNull(),
   status: text('status').default('Project Started').notNull(),
+  startDate: text('start_date').default('').notNull(),
+  estimatedCompletionDate: text('estimated_completion_date').default('').notNull(),
+  totalAmountInr: integer('total_amount_inr').default(0).notNull(),
+  paidAmountInr: integer('paid_amount_inr').default(0).notNull(),
+  balanceAmountInr: integer('balance_amount_inr').default(0).notNull(),
+  paymentClearanceStatus: text('payment_clearance_status').default('Pending').notNull(), // Pending | Advance Paid | Cleared | Override Authorized
+  handoverUnlocked: boolean('handover_unlocked').default(false).notNull(),
+  handoverMethod: text('handover_method').default('digital').notNull(), // digital | physical | hybrid
+  handoverExceptionAuthorized: boolean('handover_exception_authorized').default(false).notNull(),
+  handoverExceptionReason: text('handover_exception_reason').default('').notNull(),
+  handoverExceptionBy: text('handover_exception_by').default('').notNull(),
+  handoverExceptionAt: text('handover_exception_at').default('').notNull(),
+  customerAcknowledgedAt: text('customer_acknowledged_at').default('').notNull(),
+  customerAcknowledgedBy: text('customer_acknowledged_by').default('').notNull(),
+  completionCertificateNumber: text('completion_certificate_number').default('').notNull(),
+  completedAt: text('completed_at').default('').notNull(),
   milestones: jsonb('milestones')
     .$type<Array<{ id: string; title: string; dueDate: string; status: 'Pending' | 'In Progress' | 'Completed'; notes: string }>>()
     .default([])
@@ -607,15 +633,18 @@ export const payments = pgTable('payments', {
   id: serial('id').primaryKey(),
   paymentRef: text('payment_ref').notNull().unique(),
   userId: integer('user_id').references(() => users.id, { onDelete: 'set null' }),
-  entityType: text('entity_type').notNull(), // store_order | printing_order | project_quotation | pcb_enquiry | b2b_enquiry
+  entityType: text('entity_type').notNull(), // store_order | printing_order | project_quotation | pcb_enquiry | b2b_enquiry | farmer_booking
   entityId: integer('entity_id').notNull(),
+  paymentStage: text('payment_stage').default('').notNull(), // advance | final | milestone | full | store | spraying
   razorpayOrderId: text('razorpay_order_id').default('').notNull(),
   razorpayPaymentId: text('razorpay_payment_id').default('').notNull(),
   razorpaySignature: text('razorpay_signature').default('').notNull(),
   amountInr: integer('amount_inr').notNull(),
+  amountPaise: integer('amount_paise').default(0).notNull(),
   currency: text('currency').default('INR').notNull(),
   mode: text('mode').default('test_mode').notNull(), // live_razorpay | test_mode
   status: text('status').default('verified').notNull(),
+  verifiedAt: timestamp('verified_at'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
@@ -795,3 +824,514 @@ export const crmNotes = pgTable('crm_notes', {
   note: text('note').notNull(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
+
+// 11. Project Payment Plans, Milestones, Receipts, Clearance Certificates, Handover & Email Automation (Module 1)
+export const projectPaymentPlans = pgTable('project_payment_plans', {
+  id: serial('id').primaryKey(),
+  projectId: integer('project_id').references(() => projects.id, { onDelete: 'cascade' }),
+  enquiryId: integer('enquiry_id').references(() => projectEnquiries.id, { onDelete: 'cascade' }).notNull(),
+  quotationId: integer('quotation_id').references(() => projectQuotations.id, { onDelete: 'cascade' }).notNull(),
+  planType: text('plan_type').default('50_50_split').notNull(), // 50_50_split | custom_split | full_100
+  advancePercent: integer('advance_percent').default(50).notNull(),
+  finalPercent: integer('final_percent').default(50).notNull(),
+  allowFullPayment: boolean('allow_full_payment').default(true).notNull(),
+  isOverride: boolean('is_override').default(false).notNull(),
+  overrideReason: text('override_reason').default('').notNull(),
+  createdBy: text('created_by').default('').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export const projectPaymentMilestones = pgTable('project_payment_milestones', {
+  id: serial('id').primaryKey(),
+  planId: integer('plan_id').references(() => projectPaymentPlans.id, { onDelete: 'cascade' }),
+  projectId: integer('project_id').references(() => projects.id, { onDelete: 'cascade' }),
+  quotationId: integer('quotation_id').references(() => projectQuotations.id, { onDelete: 'cascade' }).notNull(),
+  stageName: text('stage_name').notNull(), // Advance Payment | Final Balance Payment
+  stageOrder: integer('stage_order').default(1).notNull(),
+  percent: integer('percent').default(50).notNull(),
+  amountInr: integer('amount_inr').notNull(),
+  amountPaise: integer('amount_paise').default(0).notNull(),
+  dueTrigger: text('due_trigger').default('on_acceptance').notNull(), // on_acceptance | on_completion
+  status: text('status').default('pending').notNull(), // pending | paid | waived
+  paymentRef: text('payment_ref').default('').notNull(),
+  paidAt: timestamp('paid_at'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export const projectAcceptances = pgTable('project_acceptances', {
+  id: serial('id').primaryKey(),
+  enquiryId: integer('enquiry_id').references(() => projectEnquiries.id, { onDelete: 'cascade' }).notNull(),
+  quotationId: integer('quotation_id').references(() => projectQuotations.id, { onDelete: 'cascade' }).notNull(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  acceptedByEmail: text('accepted_by_email').notNull(),
+  notes: text('notes').default('').notNull(),
+  acceptedAt: timestamp('accepted_at').defaultNow().notNull(),
+});
+
+export const paymentReceipts = pgTable('payment_receipts', {
+  id: serial('id').primaryKey(),
+  receiptNumber: text('receipt_number').notNull().unique(),
+  paymentRef: text('payment_ref').notNull(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'set null' }),
+  entityType: text('entity_type').notNull(),
+  entityId: integer('entity_id').notNull(),
+  paymentStage: text('payment_stage').default('').notNull(),
+  amountInr: integer('amount_inr').notNull(),
+  amountPaise: integer('amount_paise').default(0).notNull(),
+  razorpayPaymentId: text('razorpay_payment_id').default('').notNull(),
+  payload: jsonb('payload').default({}).notNull(),
+  issuedAt: timestamp('issued_at').defaultNow().notNull(),
+});
+
+export const paymentClearanceCertificates = pgTable('payment_clearance_certificates', {
+  id: serial('id').primaryKey(),
+  certificateNumber: text('certificate_number').notNull().unique(),
+  projectId: integer('project_id').references(() => projects.id, { onDelete: 'cascade' }).notNull(),
+  enquiryId: integer('enquiry_id').references(() => projectEnquiries.id, { onDelete: 'cascade' }).notNull(),
+  quotationId: integer('quotation_id').references(() => projectQuotations.id, { onDelete: 'set null' }),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  totalAmountInr: integer('total_amount_inr').notNull(),
+  advancePaidInr: integer('advance_paid_inr').notNull(),
+  finalPaidInr: integer('final_paid_inr').notNull(),
+  balanceInr: integer('balance_inr').default(0).notNull(),
+  paymentRefs: jsonb('payment_refs').$type<string[]>().default([]).notNull(),
+  issuedBy: text('issued_by').default('NexusTekFusion Accounts').notNull(),
+  issuedAt: timestamp('issued_at').defaultNow().notNull(),
+});
+
+export const projectWorkOrders = pgTable('project_work_orders', {
+  id: serial('id').primaryKey(),
+  workOrderNumber: text('work_order_number').notNull().unique(),
+  projectId: integer('project_id').references(() => projects.id, { onDelete: 'cascade' }).notNull(),
+  enquiryId: integer('enquiry_id').references(() => projectEnquiries.id, { onDelete: 'cascade' }).notNull(),
+  quotationId: integer('quotation_id').references(() => projectQuotations.id, { onDelete: 'set null' }),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  assignedEngineer: text('assigned_engineer').default('').notNull(),
+  estimatedCompletionDate: text('estimated_completion_date').default('').notNull(),
+  scopeSummary: text('scope_summary').default('').notNull(),
+  issuedAt: timestamp('issued_at').defaultNow().notNull(),
+});
+
+export const projectHandoverDocuments = pgTable('project_handover_documents', {
+  id: serial('id').primaryKey(),
+  projectId: integer('project_id').references(() => projects.id, { onDelete: 'cascade' }).notNull(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  title: text('title').notNull(),
+  category: text('category').default('source_code').notNull(), // source_code | circuit_pcb | documentation | report | video | software_package | other
+  fileName: text('file_name').notNull(),
+  storagePath: text('storage_path').notNull(),
+  fileSizeBytes: integer('file_size_bytes').default(0).notNull(),
+  versionLabel: text('version_label').default('v1.0').notNull(),
+  notes: text('notes').default('').notNull(),
+  downloadToken: text('download_token').notNull().unique(),
+  tokenExpiresAt: timestamp('token_expires_at').notNull(),
+  downloadCount: integer('download_count').default(0).notNull(),
+  lastDownloadedAt: timestamp('last_downloaded_at'),
+  uploadedBy: text('uploaded_by').default('').notNull(),
+  isDeleted: boolean('is_deleted').default(false).notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export const projectDeliveryRecords = pgTable('project_delivery_records', {
+  id: serial('id').primaryKey(),
+  projectId: integer('project_id').references(() => projects.id, { onDelete: 'cascade' }).notNull(),
+  courierName: text('courier_name').default('').notNull(),
+  trackingNumber: text('tracking_number').default('').notNull(),
+  trackingUrl: text('tracking_url').default('').notNull(),
+  dispatchDate: text('dispatch_date').default('').notNull(),
+  expectedDeliveryDate: text('expected_delivery_date').default('').notNull(),
+  actualDeliveryDate: text('actual_delivery_date').default('').notNull(),
+  dispatchNotes: text('dispatch_notes').default('').notNull(),
+  updatedBy: text('updated_by').default('').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export const projectEmailNotifications = pgTable('project_email_notifications', {
+  id: serial('id').primaryKey(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'set null' }),
+  projectId: integer('project_id').references(() => projects.id, { onDelete: 'set null' }),
+  enquiryId: integer('enquiry_id').references(() => projectEnquiries.id, { onDelete: 'set null' }),
+  recipientEmail: text('recipient_email').notNull(),
+  eventType: text('event_type').notNull(),
+  subject: text('subject').notNull(),
+  bodyPreview: text('body_preview').default('').notNull(),
+  provider: text('provider').default('none').notNull(),
+  deliveryStatus: text('delivery_status').default('not_configured').notNull(), // sent | failed | not_configured
+  providerMessageId: text('provider_message_id').default('').notNull(),
+  errorMessage: text('error_message').default('').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export const paymentWebhookEvents = pgTable('payment_webhook_events', {
+  id: serial('id').primaryKey(),
+  eventId: text('event_id').notNull().unique(),
+  provider: text('provider').default('razorpay').notNull(),
+  eventType: text('event_type').notNull(),
+  razorpayOrderId: text('razorpay_order_id').default('').notNull(),
+  razorpayPaymentId: text('razorpay_payment_id').default('').notNull(),
+  payload: jsonb('payload').default({}).notNull(),
+  processingStatus: text('processing_status').default('processed').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+// 12. KRASHIVANTRI Farmer & Drone Pilot Approval, Live GPS Tracking, Spraying Ops, Payouts & Penalties (Module 2)
+export const farmers = pgTable('farmers', {
+  id: serial('id').primaryKey(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'set null' }),
+  farmerCode: text('farmer_code').notNull().unique(),
+  fullName: text('full_name').notNull(),
+  mobile: text('mobile').notNull(),
+  email: text('email').default('').notNull(),
+  village: text('village').default('').notNull(),
+  taluka: text('taluka').default('').notNull(),
+  district: text('district').notNull(),
+  state: text('state').default('Maharashtra').notNull(),
+  pinCode: text('pin_code').default('').notNull(),
+  aadhaarLast4: text('aadhaar_last4').default('').notNull(),
+  kycStatus: text('kyc_status').default('Pending Review').notNull(), // Registered | Pending Review | Approved | Suspended | Rejected
+  accountStatus: text('account_status').default('active').notNull(), // active | suspended
+  totalLandAcres: doublePrecision('total_land_acres').default(0).notNull(),
+  cropsGrown: text('crops_grown').default('').notNull(),
+  adminNotes: text('admin_notes').default('').notNull(),
+  verifiedBy: text('verified_by').default('').notNull(),
+  verifiedAt: text('verified_at').default('').notNull(),
+  rejectionReason: text('rejection_reason').default('').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+export const farmerVerifications = pgTable('farmer_verifications', {
+  id: serial('id').primaryKey(),
+  farmerId: integer('farmer_id').references(() => farmers.id, { onDelete: 'cascade' }).notNull(),
+  action: text('action').notNull(), // Approved | Rejected | Suspended | Clarification Requested
+  previousStatus: text('previous_status').notNull(),
+  newStatus: text('new_status').notNull(),
+  notes: text('notes').default('').notNull(),
+  reviewedBy: text('reviewed_by').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export const farmerDocuments = pgTable('farmer_documents', {
+  id: serial('id').primaryKey(),
+  farmerId: integer('farmer_id').references(() => farmers.id, { onDelete: 'cascade' }).notNull(),
+  docType: text('doc_type').notNull(), // Aadhaar | Land Record 7/12 | Kisan Card | Bank Passbook
+  docNumberMasked: text('doc_number_masked').default('').notNull(),
+  fileName: text('file_name').notNull(),
+  storagePath: text('storage_path').notNull(),
+  verificationStatus: text('verification_status').default('Pending').notNull(),
+  notes: text('notes').default('').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export const farmerFarms = pgTable('farmer_farms', {
+  id: serial('id').primaryKey(),
+  farmerId: integer('farmer_id').references(() => farmers.id, { onDelete: 'cascade' }).notNull(),
+  farmName: text('farm_name').notNull(),
+  cropType: text('crop_type').default('').notNull(),
+  areaAcres: doublePrecision('area_acres').default(1).notNull(),
+  village: text('village').default('').notNull(),
+  district: text('district').default('').notNull(),
+  state: text('state').default('Maharashtra').notNull(),
+  pinCode: text('pin_code').default('').notNull(),
+  centerLat: doublePrecision('center_lat').notNull(),
+  centerLng: doublePrecision('center_lng').notNull(),
+  boundaryGeoJson: jsonb('boundary_geo_json')
+    .$type<Array<{ lat: number; lng: number }>>()
+    .default([])
+    .notNull(),
+  isActive: boolean('is_active').default(true).notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export const dronePilots = pgTable('drone_pilots', {
+  id: serial('id').primaryKey(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'set null' }),
+  pilotCode: text('pilot_code').notNull().unique(),
+  fullName: text('full_name').notNull(),
+  mobile: text('mobile').notNull(),
+  email: text('email').default('').notNull(),
+  city: text('city').default('').notNull(),
+  district: text('district').notNull(),
+  state: text('state').default('Maharashtra').notNull(),
+  pinCode: text('pin_code').default('').notNull(),
+  rpcNumber: text('rpc_number').default('').notNull(), // DGCA Remote Pilot Certificate Number
+  rpcValidUntil: text('rpc_valid_until').default('').notNull(),
+  kycStatus: text('kyc_status').default('Pending Review').notNull(), // Pending Review | Approved | Suspended | Rejected
+  accountStatus: text('account_status').default('active').notNull(),
+  serviceRadiusKm: integer('service_radius_km').default(35).notNull(),
+  totalSprayedAcres: doublePrecision('total_sprayed_acres').default(0).notNull(),
+  ratingAvg: doublePrecision('rating_avg').default(0).notNull(),
+  penaltyPoints: integer('penalty_points').default(0).notNull(),
+  verifiedBy: text('verified_by').default('').notNull(),
+  verifiedAt: text('verified_at').default('').notNull(),
+  rejectionReason: text('rejection_reason').default('').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+export const pilotVerifications = pgTable('pilot_verifications', {
+  id: serial('id').primaryKey(),
+  pilotId: integer('pilot_id').references(() => dronePilots.id, { onDelete: 'cascade' }).notNull(),
+  action: text('action').notNull(),
+  previousStatus: text('previous_status').notNull(),
+  newStatus: text('new_status').notNull(),
+  notes: text('notes').default('').notNull(),
+  reviewedBy: text('reviewed_by').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export const pilotDocuments = pgTable('pilot_documents', {
+  id: serial('id').primaryKey(),
+  pilotId: integer('pilot_id').references(() => dronePilots.id, { onDelete: 'cascade' }).notNull(),
+  docType: text('doc_type').notNull(), // DGCA RPC | Drone UIN | Aadhaar | PAN | Insurance
+  docNumberMasked: text('doc_number_masked').default('').notNull(),
+  fileName: text('file_name').notNull(),
+  storagePath: text('storage_path').notNull(),
+  verificationStatus: text('verification_status').default('Pending').notNull(),
+  notes: text('notes').default('').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export const pilotBankAccounts = pgTable('pilot_bank_accounts', {
+  id: serial('id').primaryKey(),
+  pilotId: integer('pilot_id').references(() => dronePilots.id, { onDelete: 'cascade' }).notNull(),
+  accountHolderName: text('account_holder_name').notNull(),
+  bankName: text('bank_name').notNull(),
+  accountNumberMasked: text('account_number_masked').notNull(),
+  accountNumberEnc: text('account_number_enc').default('').notNull(),
+  ifscCode: text('ifsc_code').notNull(),
+  upiId: text('upi_id').default('').notNull(),
+  verificationStatus: text('verification_status').default('Pending').notNull(), // Pending | Verified | Rejected
+  isPrimary: boolean('is_primary').default(true).notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export const pilotDrones = pgTable('pilot_drones', {
+  id: serial('id').primaryKey(),
+  pilotId: integer('pilot_id').references(() => dronePilots.id, { onDelete: 'cascade' }).notNull(),
+  droneModel: text('drone_model').notNull(), // e.g. KRASHIVANTRI X, KRASHIVANTRI X PRO
+  uinNumber: text('uin_number').notNull(),
+  tankCapacityLiters: doublePrecision('tank_capacity_liters').default(10).notNull(),
+  sprayWidthMeters: doublePrecision('spray_width_meters').default(4).notNull(),
+  verificationStatus: text('verification_status').default('Pending').notNull(),
+  isActive: boolean('is_active').default(true).notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export const pilotAvailability = pgTable('pilot_availability', {
+  id: serial('id').primaryKey(),
+  pilotId: integer('pilot_id').references(() => dronePilots.id, { onDelete: 'cascade' }).notNull().unique(),
+  isOnline: boolean('is_online').default(false).notNull(),
+  gpsPermissionGranted: boolean('gps_permission_granted').default(false).notNull(),
+  currentLat: doublePrecision('current_lat'),
+  currentLng: doublePrecision('current_lng'),
+  accuracyMeters: doublePrecision('accuracy_meters'),
+  speedMps: doublePrecision('speed_mps'),
+  headingDeg: doublePrecision('heading_deg'),
+  batteryPercent: integer('battery_percent'),
+  lastLocationAt: timestamp('last_location_at'),
+  status: text('status').default('offline').notNull(), // offline | available | assigned | en_route | arrived | spraying
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+export const pilotLocationUpdates = pgTable('pilot_location_updates', {
+  id: serial('id').primaryKey(),
+  pilotId: integer('pilot_id').references(() => dronePilots.id, { onDelete: 'cascade' }).notNull(),
+  bookingId: integer('booking_id'),
+  sessionId: integer('session_id'),
+  latitude: doublePrecision('latitude').notNull(),
+  longitude: doublePrecision('longitude').notNull(),
+  accuracyMeters: doublePrecision('accuracy_meters'),
+  speedMps: doublePrecision('speed_mps'),
+  headingDeg: doublePrecision('heading_deg'),
+  source: text('source').default('device_gps').notNull(), // device_gps | android_app | browser_gps
+  recordedAt: timestamp('recorded_at').defaultNow().notNull(),
+});
+
+export const serviceBookings = pgTable('service_bookings', {
+  id: serial('id').primaryKey(),
+  bookingNumber: text('booking_number').notNull().unique(),
+  farmerId: integer('farmer_id').references(() => farmers.id, { onDelete: 'cascade' }).notNull(),
+  farmId: integer('farm_id').references(() => farmerFarms.id, { onDelete: 'set null' }),
+  assignedPilotId: integer('assigned_pilot_id').references(() => dronePilots.id, { onDelete: 'set null' }),
+  cropType: text('crop_type').notNull(),
+  sprayType: text('spray_type').default('Fertilizer & Pesticide Spraying').notNull(),
+  chemicalProvidedBy: text('chemical_provided_by').default('Farmer').notNull(),
+  bookedAreaAcres: doublePrecision('booked_area_acres').notNull(),
+  ratePerAcreInr: integer('rate_per_acre_inr').notNull(),
+  totalAmountInr: integer('total_amount_inr').notNull(),
+  totalAmountPaise: integer('total_amount_paise').default(0).notNull(),
+  platformCommissionPercent: integer('platform_commission_percent').default(15).notNull(),
+  pilotPayoutInr: integer('pilot_payout_inr').default(0).notNull(),
+  preferredDate: text('preferred_date').notNull(),
+  preferredSlot: text('preferred_slot').default('Morning (6 AM - 10 AM)').notNull(),
+  farmLat: doublePrecision('farm_lat').notNull(),
+  farmLng: doublePrecision('farm_lng').notNull(),
+  farmBoundary: jsonb('farm_boundary').$type<Array<{ lat: number; lng: number }>>().default([]).notNull(),
+  bookingStatus: text('booking_status').default('Booking Requested').notNull(),
+  // Booking Requested | Payment Pending | Paid - Awaiting Pilot | Pilot Assigned | Pilot Accepted | En Route | Arrived at Farm | Spraying Active | Spraying Paused | Spraying Completed | Verification Pending | Verified & Settled | Disputed | Cancelled | Refunded
+  paymentStatus: text('payment_status').default('pending').notNull(),
+  farmerNotes: text('farmer_notes').default('').notNull(),
+  adminNotes: text('admin_notes').default('').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+export const bookingAssignments = pgTable('booking_assignments', {
+  id: serial('id').primaryKey(),
+  bookingId: integer('booking_id').references(() => serviceBookings.id, { onDelete: 'cascade' }).notNull(),
+  pilotId: integer('pilot_id').references(() => dronePilots.id, { onDelete: 'cascade' }).notNull(),
+  assignedBy: text('assigned_by').notNull(),
+  assignmentStatus: text('assignment_status').default('Offered').notNull(), // Offered | Accepted | Rejected | Reassigned
+  rejectionReason: text('rejection_reason').default('').notNull(),
+  assignedAt: timestamp('assigned_at').defaultNow().notNull(),
+  respondedAt: timestamp('responded_at'),
+});
+
+export const bookingStatusHistory = pgTable('booking_status_history', {
+  id: serial('id').primaryKey(),
+  bookingId: integer('booking_id').references(() => serviceBookings.id, { onDelete: 'cascade' }).notNull(),
+  status: text('status').notNull(),
+  actorEmail: text('actor_email').default('').notNull(),
+  note: text('note').default('').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export const operationSessions = pgTable('operation_sessions', {
+  id: serial('id').primaryKey(),
+  sessionCode: text('session_code').notNull().unique(),
+  bookingId: integer('booking_id').references(() => serviceBookings.id, { onDelete: 'cascade' }).notNull(),
+  pilotId: integer('pilot_id').references(() => dronePilots.id, { onDelete: 'cascade' }).notNull(),
+  farmerId: integer('farmer_id').references(() => farmers.id, { onDelete: 'cascade' }).notNull(),
+  farmId: integer('farm_id').references(() => farmerFarms.id, { onDelete: 'set null' }),
+  status: text('status').default('Ready').notNull(), // Ready | Active | Paused | Completed | Disputed
+  startedAt: timestamp('started_at'),
+  pausedAt: timestamp('paused_at'),
+  resumedAt: timestamp('resumed_at'),
+  completedAt: timestamp('completed_at'),
+  insideGeofenceOnStart: boolean('inside_geofence_on_start').default(false).notNull(),
+  geofenceDistanceMeters: doublePrecision('geofence_distance_meters').default(0).notNull(),
+  completedAreaAcres: doublePrecision('completed_area_acres').default(0).notNull(),
+  pauseReason: text('pause_reason').default('').notNull(),
+  pilotNotes: text('pilot_notes').default('').notNull(),
+  farmerConfirmed: boolean('farmer_confirmed').default(false).notNull(),
+  farmerDisputeReason: text('farmer_dispute_reason').default('').notNull(),
+  farmerConfirmedAt: timestamp('farmer_confirmed_at'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export const operationEvidence = pgTable('operation_evidence', {
+  id: serial('id').primaryKey(),
+  sessionId: integer('session_id').references(() => operationSessions.id, { onDelete: 'cascade' }).notNull(),
+  bookingId: integer('booking_id').references(() => serviceBookings.id, { onDelete: 'cascade' }).notNull(),
+  pilotId: integer('pilot_id').references(() => dronePilots.id, { onDelete: 'cascade' }).notNull(),
+  evidencePhase: text('evidence_phase').default('pre_spray').notNull(), // pre_spray | in_progress | post_spray
+  mediaType: text('media_type').default('image').notNull(), // image | video
+  fileName: text('file_name').notNull(),
+  storagePath: text('storage_path').notNull(),
+  latitude: doublePrecision('latitude'),
+  longitude: doublePrecision('longitude'),
+  caption: text('caption').default('').notNull(),
+  capturedAt: timestamp('captured_at').defaultNow().notNull(),
+});
+
+export const operationVerifications = pgTable('operation_verifications', {
+  id: serial('id').primaryKey(),
+  bookingId: integer('booking_id').references(() => serviceBookings.id, { onDelete: 'cascade' }).notNull(),
+  sessionId: integer('session_id').references(() => operationSessions.id, { onDelete: 'cascade' }).notNull(),
+  verificationStatus: text('verification_status').default('Pending').notNull(), // Pending | Approved | Rejected | Adjusted
+  verifiedAreaAcres: doublePrecision('verified_area_acres').default(0).notNull(),
+  disputeNotes: text('dispute_notes').default('').notNull(),
+  verifiedBy: text('verified_by').default('').notNull(),
+  verifiedAt: timestamp('verified_at'),
+});
+
+export const farmerPayments = pgTable('farmer_payments', {
+  id: serial('id').primaryKey(),
+  paymentRef: text('payment_ref').notNull().unique(),
+  bookingId: integer('booking_id').references(() => serviceBookings.id, { onDelete: 'cascade' }).notNull(),
+  farmerId: integer('farmer_id').references(() => farmers.id, { onDelete: 'cascade' }).notNull(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'set null' }),
+  amountInr: integer('amount_inr').notNull(),
+  amountPaise: integer('amount_paise').default(0).notNull(),
+  razorpayOrderId: text('razorpay_order_id').default('').notNull(),
+  razorpayPaymentId: text('razorpay_payment_id').default('').notNull(),
+  razorpaySignature: text('razorpay_signature').default('').notNull(),
+  mode: text('mode').default('test_mode').notNull(),
+  status: text('status').default('verified').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export const farmerRefunds = pgTable('farmer_refunds', {
+  id: serial('id').primaryKey(),
+  refundRef: text('refund_ref').notNull().unique(),
+  bookingId: integer('booking_id').references(() => serviceBookings.id, { onDelete: 'cascade' }).notNull(),
+  farmerPaymentId: integer('farmer_payment_id').references(() => farmerPayments.id, { onDelete: 'set null' }),
+  amountInr: integer('amount_inr').notNull(),
+  reason: text('reason').notNull(),
+  status: text('status').default('Pending').notNull(), // Pending | Processed | Failed
+  processedBy: text('processed_by').default('').notNull(),
+  providerRefundId: text('provider_refund_id').default('').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export const pilotEarningLedger = pgTable('pilot_earning_ledger', {
+  id: serial('id').primaryKey(),
+  ledgerRef: text('ledger_ref').notNull().unique(),
+  pilotId: integer('pilot_id').references(() => dronePilots.id, { onDelete: 'cascade' }).notNull(),
+  bookingId: integer('booking_id').references(() => serviceBookings.id, { onDelete: 'set null' }),
+  entryType: text('entry_type').default('spraying_earning').notNull(), // spraying_earning | penalty_deduction | bonus_adjustment | payout_debit
+  grossAmountInr: integer('gross_amount_inr').default(0).notNull(),
+  commissionInr: integer('commission_inr').default(0).notNull(),
+  penaltyDeductionInr: integer('penalty_deduction_inr').default(0).notNull(),
+  netAmountInr: integer('net_amount_inr').notNull(),
+  status: text('status').default('accrued').notNull(), // accrued | ready_for_payout | paid_out | held
+  notes: text('notes').default('').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export const pilotPayouts = pgTable('pilot_payouts', {
+  id: serial('id').primaryKey(),
+  payoutRef: text('payout_ref').notNull().unique(),
+  pilotId: integer('pilot_id').references(() => dronePilots.id, { onDelete: 'cascade' }).notNull(),
+  amountInr: integer('amount_inr').notNull(),
+  amountPaise: integer('amount_paise').default(0).notNull(),
+  bankAccountMasked: text('bank_account_masked').default('').notNull(),
+  payoutProvider: text('payout_provider').default('manual_bank_reference').notNull(), // razorpayx | bank_transfer | manual_bank_reference
+  providerPayoutId: text('provider_payout_id').default('').notNull(),
+  status: text('status').default('Pending Approval').notNull(), // Pending Approval | Processing | Settled | Failed
+  failureReason: text('failure_reason').default('').notNull(),
+  approvedBy: text('approved_by').default('').notNull(),
+  processedAt: timestamp('processed_at'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export const penalties = pgTable('penalties', {
+  id: serial('id').primaryKey(),
+  penaltyNumber: text('penalty_number').notNull().unique(),
+  targetType: text('target_type').default('pilot').notNull(), // pilot | farmer
+  targetId: integer('target_id').notNull(),
+  bookingId: integer('booking_id').references(() => serviceBookings.id, { onDelete: 'set null' }),
+  reasonCategory: text('reason_category').notNull(), // Late Arrival | No-Show | Incomplete Spray | Geofence Violation | False Reporting | Cancellation
+  description: text('description').notNull(),
+  evidenceSummary: text('evidence_summary').default('').notNull(),
+  amountInr: integer('amount_inr').default(0).notNull(),
+  status: text('status').default('Active').notNull(), // Active | Waived | Deducted | Under Appeal
+  appealStatus: text('appeal_status').default('None').notNull(), // None | Pending | Approved | Rejected
+  imposedBy: text('imposed_by').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export const penaltyAppeals = pgTable('penalty_appeals', {
+  id: serial('id').primaryKey(),
+  penaltyId: integer('penalty_id').references(() => penalties.id, { onDelete: 'cascade' }).notNull(),
+  appellantUserId: integer('appellant_user_id').references(() => users.id, { onDelete: 'set null' }),
+  explanation: text('explanation').notNull(),
+  attachmentPath: text('attachment_path').default('').notNull(),
+  decision: text('decision').default('Pending').notNull(), // Pending | Waived | Upheld
+  decisionNotes: text('decision_notes').default('').notNull(),
+  reviewedBy: text('reviewed_by').default('').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  reviewedAt: timestamp('reviewed_at'),
+});
+

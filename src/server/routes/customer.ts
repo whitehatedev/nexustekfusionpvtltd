@@ -7,8 +7,13 @@ import { db } from '../../db/index.ts';
 import {
   b2bEnquiries,
   customerAddresses,
+  dronePilots,
+  droneRepairBookings,
+  farmers,
   invoices,
   notifications,
+  paymentClearanceCertificates,
+  paymentReceipts,
   payments,
   pcbEnquiries,
   printingMachines,
@@ -16,8 +21,14 @@ import {
   printingOrders,
   productReviews,
   products,
+  projectAcceptances,
+  projectDeliveryRecords,
   projectEnquiries,
+  projectHandoverDocuments,
+  projectPaymentMilestones,
+  projectPaymentPlans,
   projectQuotations,
+  projectWorkOrders,
   projects,
   siteSettings,
   storeOrders,
@@ -25,6 +36,7 @@ import {
   users,
   wishlists,
 } from '../../db/schema.ts';
+import { dispatchLifecycleEmail } from '../email.ts';
 import { ADMIN_ROLES, AuthRequest, requireAuth } from '../../middleware/auth.ts';
 import { analyzeAndSliceModel } from '../slicer.ts';
 import { createRazorpayOrder, verifyRazorpaySignature } from '../razorpay.ts';
@@ -67,11 +79,18 @@ customerRouter.get('/me', requireAuth, async (req: AuthRequest, res) => {
       myProjects,
       myPcb,
       myB2b,
+      myRepairs,
       myPayments,
       myInvoices,
+      myReceipts,
+      myClearances,
+      myWorkOrders,
+      myHandoverDocs,
       myWishlist,
       myNotifications,
       myTickets,
+      myFarmerRows,
+      myPilotRows,
     ] = await Promise.all([
       db.select().from(customerAddresses).where(eq(customerAddresses.userId, userId)).orderBy(desc(customerAddresses.isDefault)),
       db.select().from(storeOrders).where(and(eq(storeOrders.userId, userId), eq(storeOrders.isDeleted, false))).orderBy(desc(storeOrders.createdAt)),
@@ -80,8 +99,13 @@ customerRouter.get('/me', requireAuth, async (req: AuthRequest, res) => {
       db.select().from(projects).where(and(eq(projects.userId, userId), eq(projects.isDeleted, false))).orderBy(desc(projects.createdAt)),
       db.select().from(pcbEnquiries).where(eq(pcbEnquiries.userId, userId)).orderBy(desc(pcbEnquiries.createdAt)),
       db.select().from(b2bEnquiries).where(eq(b2bEnquiries.userId, userId)).orderBy(desc(b2bEnquiries.createdAt)),
+      db.select().from(droneRepairBookings).where(eq(droneRepairBookings.userId, userId)).orderBy(desc(droneRepairBookings.createdAt)),
       db.select().from(payments).where(eq(payments.userId, userId)).orderBy(desc(payments.createdAt)),
       db.select().from(invoices).where(and(eq(invoices.userId, userId), eq(invoices.isDeleted, false))).orderBy(desc(invoices.issuedAt)),
+      db.select().from(paymentReceipts).where(eq(paymentReceipts.userId, userId)).orderBy(desc(paymentReceipts.issuedAt)),
+      db.select().from(paymentClearanceCertificates).where(eq(paymentClearanceCertificates.userId, userId)).orderBy(desc(paymentClearanceCertificates.issuedAt)),
+      db.select().from(projectWorkOrders).where(eq(projectWorkOrders.userId, userId)).orderBy(desc(projectWorkOrders.issuedAt)),
+      db.select().from(projectHandoverDocuments).where(and(eq(projectHandoverDocuments.userId, userId), eq(projectHandoverDocuments.isDeleted, false))).orderBy(desc(projectHandoverDocuments.createdAt)),
       db
         .select({ wishlist: wishlists, product: products })
         .from(wishlists)
@@ -89,16 +113,39 @@ customerRouter.get('/me', requireAuth, async (req: AuthRequest, res) => {
         .where(eq(wishlists.userId, userId)),
       db.select().from(notifications).where(eq(notifications.userId, userId)).orderBy(desc(notifications.createdAt)).limit(30),
       db.select().from(supportTickets).where(eq(supportTickets.userId, userId)).orderBy(desc(supportTickets.createdAt)),
+      db.select().from(farmers).where(eq(farmers.userId, userId)).limit(1),
+      db.select().from(dronePilots).where(eq(dronePilots.userId, userId)).limit(1),
     ]);
 
-    // Fetch quotations belonging to user's enquiries
     const enquiryIds = myEnquiries.map((e) => e.id);
-    const myQuotations =
-      enquiryIds.length > 0
-        ? (await db.select().from(projectQuotations).orderBy(desc(projectQuotations.createdAt))).filter((q) =>
-            enquiryIds.includes(q.enquiryId)
-          )
-        : [];
+    const projectIds = myProjects.map((p) => p.id);
+    const [allQuotations, allPlans, allMilestones, allAcceptances, allDeliveries] = await Promise.all([
+      enquiryIds.length > 0 ? db.select().from(projectQuotations).orderBy(desc(projectQuotations.createdAt)) : Promise.resolve([]),
+      enquiryIds.length > 0 ? db.select().from(projectPaymentPlans).orderBy(desc(projectPaymentPlans.createdAt)) : Promise.resolve([]),
+      enquiryIds.length > 0 ? db.select().from(projectPaymentMilestones) : Promise.resolve([]),
+      enquiryIds.length > 0 ? db.select().from(projectAcceptances).orderBy(desc(projectAcceptances.acceptedAt)) : Promise.resolve([]),
+      projectIds.length > 0 ? db.select().from(projectDeliveryRecords).orderBy(desc(projectDeliveryRecords.createdAt)) : Promise.resolve([]),
+    ]);
+
+    const myQuotations = allQuotations.filter((q) => enquiryIds.includes(q.enquiryId));
+    const myQuoteIds = new Set(myQuotations.map((q) => q.id));
+    const myPaymentPlans = allPlans.filter((p) => enquiryIds.includes(p.enquiryId));
+    const myPaymentMilestones = allMilestones.filter((m) => myQuoteIds.has(m.quotationId));
+    const myAcceptances = allAcceptances.filter((a) => enquiryIds.includes(a.enquiryId));
+    const myDeliveryRecords = allDeliveries.filter((d) => projectIds.includes(d.projectId));
+
+    // Gate storagePath exposure for unpaid locked handover documents
+    const projectMap = Object.fromEntries(myProjects.map((p) => [p.id, p]));
+    const safeHandoverDocs = myHandoverDocs.map((doc) => {
+      const proj = projectMap[doc.projectId];
+      const unlocked = Boolean(proj && (proj.handoverUnlocked || proj.handoverExceptionAuthorized));
+      return {
+        ...doc,
+        storagePath: unlocked ? doc.storagePath : '',
+        downloadToken: unlocked ? doc.downloadToken : '',
+        unlocked,
+      };
+    });
 
     res.json({
       user: req.dbUser,
@@ -108,13 +155,24 @@ customerRouter.get('/me', requireAuth, async (req: AuthRequest, res) => {
       projectEnquiries: myEnquiries,
       quotations: myQuotations,
       projects: myProjects,
+      paymentPlans: myPaymentPlans,
+      paymentMilestones: myPaymentMilestones,
+      acceptances: myAcceptances,
+      receipts: myReceipts,
+      clearanceCertificates: myClearances,
+      workOrders: myWorkOrders,
+      handoverDocuments: safeHandoverDocs,
+      deliveryRecords: myDeliveryRecords,
       pcbEnquiries: myPcb,
       b2bEnquiries: myB2b,
+      droneRepairs: myRepairs,
       payments: myPayments,
       invoices: myInvoices,
       wishlist: myWishlist.map((w) => w.product),
       notifications: myNotifications,
       supportTickets: myTickets,
+      farmerProfile: myFarmerRows[0] || null,
+      pilotProfile: myPilotRows[0] || null,
     });
   } catch (error) {
     console.error('Profile summary error:', error);
@@ -750,7 +808,7 @@ customerRouter.patch('/project-enquiries/:id/delivery-address', requireAuth, asy
 customerRouter.post('/quotations/:id/respond', requireAuth, async (req: AuthRequest, res) => {
   try {
     const id = Number(req.params.id);
-    const { action, feedback } = req.body; // Accept | Modification Requested | Reject
+    const { action, feedback } = req.body; // accept | modify | reject
 
     const [quotation] = await db
       .select()
@@ -770,7 +828,7 @@ customerRouter.post('/quotations/:id/respond', requireAuth, async (req: AuthRequ
     let nextEnquiryStatus = enquiry.status;
     if (action === 'accept') {
       nextQuotationStatus = 'Accepted';
-      nextEnquiryStatus = 'Awaiting Payment';
+      nextEnquiryStatus = 'Project Approved – Advance Payment Required';
     } else if (action === 'modify') {
       nextQuotationStatus = 'Modification Requested';
       nextEnquiryStatus = 'Modification Requested';
@@ -795,7 +853,110 @@ customerRouter.post('/quotations/:id/respond', requireAuth, async (req: AuthRequ
       .set({ status: nextEnquiryStatus, updatedAt: new Date() })
       .where(eq(projectEnquiries.id, enquiry.id));
 
-    res.json({ quotation: updatedQuotation });
+    let acceptance: any = null;
+    let milestones: any[] = [];
+    if (action === 'accept') {
+      const [acc] = await db
+        .insert(projectAcceptances)
+        .values({
+          enquiryId: enquiry.id,
+          quotationId: quotation.id,
+          userId: req.dbUser!.id,
+          acceptedByEmail: req.dbUser!.email,
+          notes: String(feedback || ''),
+        })
+        .returning();
+      acceptance = acc;
+
+      // Ensure payment plan & milestones exist for this quotation
+      const existingPlans = await db
+        .select()
+        .from(projectPaymentPlans)
+        .where(eq(projectPaymentPlans.quotationId, quotation.id))
+        .limit(1);
+
+      let plan = existingPlans[0];
+      const advPct = Number(quotation.advancePercent || 50);
+      const finPct = Math.max(0, 100 - advPct);
+      if (!plan) {
+        const [createdPlan] = await db
+          .insert(projectPaymentPlans)
+          .values({
+            enquiryId: enquiry.id,
+            quotationId: quotation.id,
+            planType: advPct === 100 ? 'full_100' : advPct === 50 ? '50_50_split' : 'custom_split',
+            advancePercent: advPct,
+            finalPercent: finPct,
+            allowFullPayment: quotation.allowFullPayment ?? true,
+            isOverride: Boolean(quotation.planOverrideReason),
+            overrideReason: quotation.planOverrideReason || '',
+            createdBy: 'system',
+          })
+          .returning();
+        plan = createdPlan;
+      }
+
+      const existingMilestones = await db
+        .select()
+        .from(projectPaymentMilestones)
+        .where(eq(projectPaymentMilestones.quotationId, quotation.id));
+
+      if (existingMilestones.length === 0) {
+        const m1 = await db
+          .insert(projectPaymentMilestones)
+          .values({
+            planId: plan.id,
+            quotationId: quotation.id,
+            stageName: 'Advance Payment',
+            stageOrder: 1,
+            percent: advPct,
+            amountInr: quotation.advanceAmountInr,
+            amountPaise: Math.round(quotation.advanceAmountInr * 100),
+            dueTrigger: 'on_acceptance',
+            status: 'pending',
+          })
+          .returning();
+        milestones.push(...m1);
+
+        if (quotation.balanceAmountInr > 0) {
+          const m2 = await db
+            .insert(projectPaymentMilestones)
+            .values({
+              planId: plan.id,
+              quotationId: quotation.id,
+              stageName: 'Final Balance Payment',
+              stageOrder: 2,
+              percent: finPct,
+              amountInr: quotation.balanceAmountInr,
+              amountPaise: Math.round(quotation.balanceAmountInr * 100),
+              dueTrigger: 'on_completion',
+              status: 'pending',
+            })
+            .returning();
+          milestones.push(...m2);
+        }
+      } else {
+        milestones = existingMilestones;
+      }
+
+      await dispatchLifecycleEmail({
+        userId: req.dbUser!.id,
+        enquiryId: enquiry.id,
+        recipientEmail: enquiry.customerEmail || req.dbUser!.email,
+        eventType: 'project_approved',
+        vars: {
+          customerName: enquiry.customerName,
+          enquiryNumber: enquiry.enquiryNumber,
+          quotationNumber: quotation.quotationNumber || `REV-${quotation.revisionNumber}`,
+          advancePercent: advPct,
+          advanceAmountInr: quotation.advanceAmountInr,
+          balanceAmountInr: quotation.balanceAmountInr,
+          totalAmountInr: quotation.totalAmountInr,
+        },
+      });
+    }
+
+    res.json({ quotation: updatedQuotation, acceptance, milestones });
   } catch (error) {
     console.error('Quotation respond error:', error);
     res.status(500).json({ error: 'Failed to update quotation response.' });
@@ -943,6 +1104,9 @@ customerRouter.post('/payments/create-order', requireAuth, async (req: AuthReque
         return res.status(400).json({ error: 'Quotation is already paid in full.' });
       }
       if (paymentMode === 'full') {
+        if (q.allowFullPayment === false && alreadyPaid === 0) {
+          return res.status(400).json({ error: 'Full upfront payment is disabled for this quotation; please pay advance.' });
+        }
         amountInr = remaining;
       } else if (paymentMode === 'balance') {
         amountInr = remaining;
@@ -998,6 +1162,7 @@ customerRouter.post('/payments/create-order', requireAuth, async (req: AuthReque
     res.json({
       ...rzp,
       amountInr,
+      amountPaise: Math.round(amountInr * 100),
       receipt,
       customer: {
         name: req.dbUser!.fullName || req.dbUser!.email,
@@ -1042,16 +1207,26 @@ customerRouter.post('/payments/verify', requireAuth, async (req: AuthRequest, re
 
     const [[companyRow], [projCfgRow]] = await Promise.all([
       db.select().from(siteSettings).where(eq(siteSettings.key, 'companyInfo')).limit(1),
-      db.select().from(siteSettings).where(eq(siteSettings.key, 'projectSettings')).limit(1),
+      db.select().from(siteSettings).where(eq(siteSettings.key, 'projectPaymentSettings')).limit(1),
     ]);
     const companyInfo = (companyRow?.value as { gstin?: string }) || {};
     const projCfg = (projCfgRow?.value as { enableGstTax?: boolean }) || {};
     const isGstEnabled = Boolean(companyInfo.gstin && companyInfo.gstin.trim() && projCfg.enableGstTax);
-    const docType = isGstEnabled ? 'GST Tax Invoice' : 'Proforma Invoice / Payment Receipt';
+    let docType = isGstEnabled ? 'GST Tax Invoice' : 'Proforma Invoice / Payment Receipt';
 
     let amountInr = 0;
     let gstInr = 0;
+    let paymentStage = entityType === 'store_order' ? 'store' : entityType;
     let payload: Record<string, unknown> = {};
+    let projectQuoteResult: {
+      enquiry: any;
+      quotation: any;
+      project: any;
+      isAdvance: boolean;
+      isFullyPaid: boolean;
+      chargeAmount: number;
+      prevPaid: number;
+    } | null = null;
 
     if (entityType === 'store_order') {
       const [order] = await db
@@ -1095,6 +1270,8 @@ customerRouter.post('/payments/verify', requireAuth, async (req: AuthRequest, re
 
       const prevPaid = Number(existingQ.paidAmountInr || 0);
       const remaining = Math.max(0, existingQ.totalAmountInr - prevPaid);
+      if (remaining <= 0) return res.status(400).json({ error: 'Quotation already paid in full.' });
+
       const chargeAmount =
         paymentMode === 'full' || paymentMode === 'balance'
           ? remaining
@@ -1103,6 +1280,15 @@ customerRouter.post('/payments/verify', requireAuth, async (req: AuthRequest, re
           : existingQ.advanceAmountInr;
       const newPaidTotal = Math.min(existingQ.totalAmountInr, prevPaid + chargeAmount);
       const isFullyPaid = newPaidTotal >= existingQ.totalAmountInr;
+      const isAdvance = prevPaid === 0 && !isFullyPaid;
+      paymentStage = isAdvance ? 'advance' : isFullyPaid && prevPaid === 0 ? 'full' : 'final';
+      docType = isGstEnabled
+        ? isAdvance
+          ? 'Advance GST Tax Invoice'
+          : 'Final GST Tax Invoice'
+        : isAdvance
+        ? 'Advance Proforma Invoice'
+        : 'Final Payment Invoice';
 
       const [q] = await db
         .update(projectQuotations)
@@ -1116,11 +1302,13 @@ customerRouter.post('/payments/verify', requireAuth, async (req: AuthRequest, re
 
       const [enq] = await db
         .update(projectEnquiries)
-        .set({ status: isFullyPaid ? 'Payment Confirmed' : 'Advance Paid', updatedAt: new Date() })
+        .set({
+          status: isFullyPaid ? 'Final Payment Completed' : 'Advance Paid',
+          updatedAt: new Date(),
+        })
         .where(eq(projectEnquiries.id, q.enquiryId))
         .returning();
 
-      // Check if project already exists for this enquiry; create only once
       const existingProjects = await db
         .select()
         .from(projects)
@@ -1128,8 +1316,11 @@ customerRouter.post('/payments/verify', requireAuth, async (req: AuthRequest, re
         .limit(1);
 
       let activeProject = existingProjects[0];
+      const balanceRemaining = Math.max(0, q.totalAmountInr - newPaidTotal);
+
       if (!activeProject) {
         const projectCode = generateCode('NTF-PRJ');
+        const todayIso = new Date().toISOString().slice(0, 10);
         const [createdProject] = await db
           .insert(projects)
           .values({
@@ -1140,13 +1331,20 @@ customerRouter.post('/payments/verify', requireAuth, async (req: AuthRequest, re
             title: enq.projectTitle,
             assignedEngineer: enq.assignedEngineer || 'Lead Systems Engineer',
             status: 'Project Started',
+            startDate: todayIso,
+            estimatedCompletionDate: enq.targetCompletionDate || q.estimatedDuration || '',
+            totalAmountInr: q.totalAmountInr,
+            paidAmountInr: newPaidTotal,
+            balanceAmountInr: balanceRemaining,
+            paymentClearanceStatus: isFullyPaid ? 'Cleared' : 'Advance Paid',
+            handoverUnlocked: isFullyPaid,
             milestones: [
               {
                 id: 'm1',
                 title: 'Requirement Lock & Component Procurement',
                 dueDate: '',
                 status: 'In Progress',
-                notes: 'Work order generated upon verified payment.',
+                notes: `Work order activated upon verified payment of ₹${chargeAmount}.`,
               },
               {
                 id: 'm2',
@@ -1157,7 +1355,7 @@ customerRouter.post('/payments/verify', requireAuth, async (req: AuthRequest, re
               },
               {
                 id: 'm3',
-                title: 'Validation Testing & Final Dispatch',
+                title: 'Validation Testing, Final Payment & Handover',
                 dueDate: enq.targetCompletionDate || '',
                 status: 'Pending',
                 notes: '',
@@ -1168,35 +1366,88 @@ customerRouter.post('/payments/verify', requireAuth, async (req: AuthRequest, re
                 id: 'u1',
                 timestamp: new Date().toISOString(),
                 author: 'NexusTekFusion Operations',
-                summary: `Work order ${projectCode} activated after verified payment of ₹${chargeAmount}.`,
+                summary: `Work order ${projectCode} activated after verified payment of ₹${chargeAmount.toLocaleString('en-IN')}.`,
               },
             ],
           })
           .returning();
         activeProject = createdProject;
 
+        // Create Work Order automatically on initial payment
+        await db.insert(projectWorkOrders).values({
+          workOrderNumber: generateCode('NTF-WRK'),
+          projectId: activeProject.id,
+          enquiryId: enq.id,
+          quotationId: q.id,
+          userId: req.dbUser!.id,
+          assignedEngineer: activeProject.assignedEngineer,
+          estimatedCompletionDate: activeProject.estimatedCompletionDate,
+          scopeSummary: q.technicalScope || enq.projectDescription,
+        });
+
         await createNotification({
           userId: req.dbUser!.id,
           title: `Project ${createdProject.projectCode} Activated`,
-          message: `Your project "${createdProject.title}" is now active with milestones in your dashboard.`,
+          message: `Advance payment ₹${chargeAmount.toLocaleString('en-IN')} verified. Work order issued.`,
           link: '/my-account/project-enquiries',
         });
       } else {
+        const nextUpdates = [
+          ...(activeProject.updates || []),
+          {
+            id: `u-${Date.now()}`,
+            timestamp: new Date().toISOString(),
+            author: 'NexusTekFusion Accounts',
+            summary: isFullyPaid
+              ? `Final balance payment of ₹${chargeAmount.toLocaleString('en-IN')} verified. Payment Cleared & Handover unlocked.`
+              : `Payment of ₹${chargeAmount.toLocaleString('en-IN')} verified. Remaining balance: ₹${balanceRemaining.toLocaleString('en-IN')}.`,
+          },
+        ];
+        const [updatedProj] = await db
+          .update(projects)
+          .set({
+            paidAmountInr: newPaidTotal,
+            balanceAmountInr: balanceRemaining,
+            paymentClearanceStatus: isFullyPaid ? 'Cleared' : 'Advance Paid',
+            handoverUnlocked: isFullyPaid || activeProject.handoverExceptionAuthorized,
+            status: isFullyPaid ? 'Final Payment Completed' : activeProject.status,
+            updates: nextUpdates,
+            updatedAt: new Date(),
+          })
+          .where(eq(projects.id, activeProject.id))
+          .returning();
+        activeProject = updatedProj;
+
         await createNotification({
           userId: req.dbUser!.id,
-          title: `Project Payment Received (${activeProject.projectCode})`,
-          message: `Verified payment of ₹${chargeAmount}. Total paid ₹${newPaidTotal} of ₹${q.totalAmountInr}.`,
+          title: isFullyPaid
+            ? `Payment Cleared — ${activeProject.projectCode} Ready for Handover`
+            : `Project Payment Received (${activeProject.projectCode})`,
+          message: `Verified payment of ₹${chargeAmount.toLocaleString('en-IN')}. Total paid ₹${newPaidTotal.toLocaleString('en-IN')} of ₹${q.totalAmountInr.toLocaleString('en-IN')}.`,
           link: '/my-account/project-enquiries',
         });
       }
 
       amountInr = chargeAmount;
-      gstInr = q.gstInr;
+      gstInr = isAdvance
+        ? Math.round((q.gstInr * chargeAmount) / Math.max(1, q.totalAmountInr))
+        : q.gstInr - Math.round((q.gstInr * prevPaid) / Math.max(1, q.totalAmountInr));
       payload = {
         projectCode: activeProject.projectCode,
         enquiryNumber: enq.enquiryNumber,
         quotationId: q.id,
+        quotationNumber: q.quotationNumber || `REV-${q.revisionNumber}`,
         paymentMode,
+        paymentStage,
+      };
+      projectQuoteResult = {
+        enquiry: enq,
+        quotation: q,
+        project: activeProject,
+        isAdvance,
+        isFullyPaid,
+        chargeAmount,
+        prevPaid,
       };
     } else if (entityType === 'pcb_enquiry') {
       const [pcb] = await db
@@ -1219,26 +1470,46 @@ customerRouter.post('/payments/verify', requireAuth, async (req: AuthRequest, re
     }
 
     const mode = paymentIdToVerify.startsWith('pay_test_') ? 'test_mode' : 'live_razorpay';
+    const paymentRef = generateCode('NTF-PAY');
     const [paymentRecord] = await db
       .insert(payments)
       .values({
-        paymentRef: generateCode('PAY'),
+        paymentRef,
         userId: req.dbUser!.id,
         entityType,
         entityId: id,
+        paymentStage,
         razorpayOrderId: String(razorpayOrderId),
         razorpayPaymentId: paymentIdToVerify,
         razorpaySignature: signatureToVerify,
         amountInr,
+        amountPaise: Math.round(amountInr * 100),
         mode,
         status: 'verified',
+        verifiedAt: new Date(),
+      })
+      .returning();
+
+    const [receiptRecord] = await db
+      .insert(paymentReceipts)
+      .values({
+        receiptNumber: generateCode('NTF-RCP'),
+        paymentRef,
+        userId: req.dbUser!.id,
+        entityType,
+        entityId: id,
+        paymentStage,
+        amountInr,
+        amountPaise: Math.round(amountInr * 100),
+        razorpayPaymentId: paymentIdToVerify,
+        payload,
       })
       .returning();
 
     const [invoiceRecord] = await db
       .insert(invoices)
       .values({
-        invoiceNumber: generateCode('INV'),
+        invoiceNumber: generateCode('NTF-INV'),
         userId: req.dbUser!.id,
         entityType,
         entityId: id,
@@ -1249,12 +1520,305 @@ customerRouter.post('/payments/verify', requireAuth, async (req: AuthRequest, re
       })
       .returning();
 
-    res.json({ verified: true, payment: paymentRecord, invoice: invoiceRecord });
+    let clearanceCertificate: any = null;
+    if (projectQuoteResult) {
+      const { enquiry: enq, quotation: q, project: proj, isAdvance, isFullyPaid } = projectQuoteResult;
+      const msRows = await db
+        .select()
+        .from(projectPaymentMilestones)
+        .where(eq(projectPaymentMilestones.quotationId, q.id));
+
+      for (const ms of msRows) {
+        await db
+          .update(projectPaymentMilestones)
+          .set({ projectId: proj.id })
+          .where(eq(projectPaymentMilestones.id, ms.id));
+        if (isFullyPaid || (isAdvance && ms.stageOrder === 1)) {
+          await db
+            .update(projectPaymentMilestones)
+            .set({ status: 'paid', paymentRef, paidAt: new Date() })
+            .where(eq(projectPaymentMilestones.id, ms.id));
+        }
+      }
+
+      if (isFullyPaid) {
+        const existingClr = await db
+          .select()
+          .from(paymentClearanceCertificates)
+          .where(eq(paymentClearanceCertificates.projectId, proj.id))
+          .limit(1);
+        if (existingClr.length === 0) {
+          const allProjPayments = await db
+            .select()
+            .from(payments)
+            .where(and(eq(payments.entityType, 'project_quotation'), eq(payments.entityId, q.id)));
+          const refs = allProjPayments.map((p) => p.paymentRef);
+          const certNo = generateCode('NTF-CLR');
+          const [clr] = await db
+            .insert(paymentClearanceCertificates)
+            .values({
+              certificateNumber: certNo,
+              projectId: proj.id,
+              enquiryId: enq.id,
+              quotationId: q.id,
+              userId: req.dbUser!.id,
+              totalAmountInr: q.totalAmountInr,
+              advancePaidInr: projectQuoteResult.prevPaid || (isAdvance ? amountInr : 0),
+              finalPaidInr: projectQuoteResult.prevPaid > 0 ? amountInr : q.totalAmountInr,
+              balanceInr: 0,
+              paymentRefs: refs,
+              issuedBy: 'NEXUSTEKFUSION ACCOUNTS',
+            })
+            .returning();
+          clearanceCertificate = clr;
+
+          await dispatchLifecycleEmail({
+            userId: req.dbUser!.id,
+            projectId: proj.id,
+            enquiryId: enq.id,
+            recipientEmail: enq.customerEmail || req.dbUser!.email,
+            eventType: 'final_payment_confirmed',
+            vars: {
+              customerName: enq.customerName,
+              projectCode: proj.projectCode,
+              projectTitle: proj.title,
+              amountInr,
+              paymentRef,
+              certificateNumber: certNo,
+            },
+          });
+        }
+      } else {
+        await dispatchLifecycleEmail({
+          userId: req.dbUser!.id,
+          projectId: proj.id,
+          enquiryId: enq.id,
+          recipientEmail: enq.customerEmail || req.dbUser!.email,
+          eventType: 'advance_payment_confirmed',
+          vars: {
+            customerName: enq.customerName,
+            projectCode: proj.projectCode,
+            projectTitle: proj.title,
+            amountInr,
+            paymentRef,
+            assignedEngineer: proj.assignedEngineer,
+          },
+        });
+      }
+    }
+
+    res.json({
+      verified: true,
+      payment: paymentRecord,
+      receipt: receiptRecord,
+      invoice: invoiceRecord,
+      clearanceCertificate,
+    });
   } catch (error) {
     console.error('Verify payment error:', error);
     res.status(500).json({ error: 'Payment verification failed.' });
   }
 });
+
+// Gated Time-Limited Project Handover Document Download
+customerRouter.get('/projects/:projectId/handover-documents/:docId/download', async (req: AuthRequest, res) => {
+  try {
+    const projectId = Number(req.params.projectId);
+    const docId = Number(req.params.docId);
+    const token = String(req.query.token || '').trim();
+
+    const [proj] = await db.select().from(projects).where(eq(projects.id, projectId)).limit(1);
+    const [doc] = await db
+      .select()
+      .from(projectHandoverDocuments)
+      .where(
+        and(
+          eq(projectHandoverDocuments.id, docId),
+          eq(projectHandoverDocuments.projectId, projectId),
+          eq(projectHandoverDocuments.isDeleted, false)
+        )
+      )
+      .limit(1);
+
+    if (!proj || !doc) {
+      return res.status(404).json({ error: 'Handover deliverable not found.' });
+    }
+
+    const isTokenAuthorized = token && token === doc.downloadToken;
+    // If no token provided, try session/bearer auth via optionalAuth or require token
+    if (!isTokenAuthorized) {
+      return res.status(403).json({ error: 'Valid signed download token is required.' });
+    }
+
+    if (doc.tokenExpiresAt && new Date(doc.tokenExpiresAt) < new Date()) {
+      return res.status(403).json({ error: 'Download link has expired. Request link renewal from your dashboard or admin.' });
+    }
+
+    if (!proj.handoverUnlocked && !proj.handoverExceptionAuthorized) {
+      return res.status(403).json({
+        error: 'Project handover is locked until remaining balance payment is cleared or authorized by Super Admin.',
+      });
+    }
+
+    const absPath = path.resolve(UPLOADS_ROOT, doc.storagePath);
+    if (!absPath.startsWith(UPLOADS_ROOT) || !fs.existsSync(absPath)) {
+      return res.status(404).json({ error: 'Deliverable file missing from storage.' });
+    }
+
+    await db
+      .update(projectHandoverDocuments)
+      .set({
+        downloadCount: (doc.downloadCount || 0) + 1,
+        lastDownloadedAt: new Date(),
+      })
+      .where(eq(projectHandoverDocuments.id, doc.id));
+
+    res.download(absPath, doc.fileName);
+  } catch (error) {
+    console.error('Handover document download error:', error);
+    res.status(500).json({ error: 'Failed to download handover deliverable.' });
+  }
+});
+
+// Customer Handover Receipt Acknowledgment -> Generates Completion Certificate
+customerRouter.post('/projects/:id/acknowledge-handover', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const projectId = Number(req.params.id);
+    const [proj] = await db
+      .select()
+      .from(projects)
+      .where(and(eq(projects.id, projectId), eq(projects.userId, req.dbUser!.id)))
+      .limit(1);
+    if (!proj) return res.status(404).json({ error: 'Project not found.' });
+
+    if (!proj.handoverUnlocked && !proj.handoverExceptionAuthorized) {
+      return res.status(400).json({ error: 'Final payment clearance is required before handover acknowledgment.' });
+    }
+
+    const completionNo = proj.completionCertificateNumber || generateCode('NTF-CMP');
+    const nowIso = new Date().toISOString();
+    const nextUpdates = [
+      ...(proj.updates || []),
+      {
+        id: `u-ack-${Date.now()}`,
+        timestamp: nowIso,
+        author: req.dbUser!.fullName || req.dbUser!.email,
+        summary: `Customer acknowledged receipt of project deliverables. Completion Certificate ${completionNo} issued.`,
+      },
+    ];
+
+    const [updated] = await db
+      .update(projects)
+      .set({
+        customerAcknowledgedAt: nowIso,
+        customerAcknowledgedBy: req.dbUser!.email,
+        completionCertificateNumber: completionNo,
+        status: 'Completed',
+        completedAt: nowIso,
+        updates: nextUpdates,
+        updatedAt: new Date(),
+      })
+      .where(eq(projects.id, projectId))
+      .returning();
+
+    await db
+      .update(projectEnquiries)
+      .set({ status: 'Completed', updatedAt: new Date() })
+      .where(eq(projectEnquiries.id, proj.enquiryId));
+
+    await dispatchLifecycleEmail({
+      userId: req.dbUser!.id,
+      projectId: updated.id,
+      enquiryId: updated.enquiryId,
+      recipientEmail: req.dbUser!.email,
+      eventType: 'project_delivered',
+      vars: {
+        customerName: req.dbUser!.fullName || req.dbUser!.email,
+        projectCode: updated.projectCode,
+        projectTitle: updated.title,
+      },
+    });
+
+    res.json({ project: updated, completionCertificateNumber: completionNo });
+  } catch (error) {
+    console.error('Acknowledge handover error:', error);
+    res.status(500).json({ error: 'Failed to acknowledge project handover.' });
+  }
+});
+
+// Customer Drone Repair Booking Submission
+const repairUpload = createUploadMiddleware('drone-repairs', ['.png', '.jpg', '.jpeg', '.webp', '.mp4', '.mov'], 50);
+customerRouter.post(
+  '/drone-repairs',
+  requireAuth,
+  repairUpload.fields([
+    { name: 'photos', maxCount: 5 },
+    { name: 'video', maxCount: 1 },
+  ]),
+  async (req: AuthRequest, res) => {
+    try {
+      const b = req.body;
+      if (!b.customerName || !b.mobile || !b.droneBrandModel || !b.problemDescription) {
+        return res.status(400).json({ error: 'Customer name, mobile, drone brand/model, and issue description are required.' });
+      }
+      const filesObj = (req.files as Record<string, Express.Multer.File[]>) || {};
+      const photos = (filesObj.photos || []).map((f) => ({
+        originalName: f.originalname,
+        storagePath: path.relative(UPLOADS_ROOT, f.path),
+        mimeType: f.mimetype,
+        sizeBytes: f.size,
+      }));
+      const vid = filesObj.video?.[0];
+      const videoFile = vid
+        ? {
+            originalName: vid.originalname,
+            storagePath: path.relative(UPLOADS_ROOT, vid.path),
+            mimeType: vid.mimetype,
+            sizeBytes: vid.size,
+          }
+        : null;
+
+      const ref = generateCode('NTF-REP');
+      const [booking] = await db
+        .insert(droneRepairBookings)
+        .values({
+          referenceNumber: ref,
+          userId: req.dbUser!.id,
+          serviceMode: b.serviceMode === 'field_visit' ? 'field_visit' : 'service_centre',
+          customerName: String(b.customerName).trim(),
+          mobile: String(b.mobile).trim(),
+          email: String(b.email || req.dbUser!.email).trim(),
+          address: String(b.address || '').trim(),
+          city: String(b.city || '').trim(),
+          district: String(b.district || '').trim(),
+          pinCode: String(b.pinCode || '').trim(),
+          droneBrandModel: String(b.droneBrandModel).trim(),
+          droneType: String(b.droneType || 'Agriculture').trim(),
+          problemDescription: String(b.problemDescription).trim(),
+          photos,
+          videoFile,
+          preferredDate: String(b.preferredDate || ''),
+          preferredTime: String(b.preferredTime || ''),
+          additionalInfo: String(b.additionalInfo || ''),
+          status: 'Booking received',
+          statusHistory: [
+            {
+              status: 'Booking received',
+              timestamp: new Date().toISOString(),
+              note: 'Repair booking logged for Nagpur diagnostics review.',
+              actor: req.dbUser!.email,
+            },
+          ],
+        })
+        .returning();
+
+      res.status(201).json({ booking });
+    } catch (error: any) {
+      console.error('Drone repair create error:', error);
+      res.status(500).json({ error: error?.message || 'Failed to submit drone repair booking.' });
+    }
+  }
+);
 
 // Support Ticket Replies
 customerRouter.post('/support-tickets/:id/reply', requireAuth, async (req: AuthRequest, res) => {

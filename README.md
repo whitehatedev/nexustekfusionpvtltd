@@ -12,12 +12,16 @@ Official full-stack web platform for **NEXUSTEKFUSION PRIVATE LIMITED** (`https:
 
 ## Architecture Overview
 
-- **Frontend:** React 19, TypeScript, Tailwind CSS v4, Three.js interactive 3D CAD mesh viewer (`src/components/ModelViewer3D.tsx`), jsPDF invoice & quotation generator (`src/lib/pdf.ts`).
+- **Frontend:** React 19, TypeScript, Tailwind CSS v4, Three.js interactive 3D CAD mesh viewer (`src/components/ModelViewer3D.tsx`), OpenStreetMap + Leaflet geospatial field & GPS telemetry viewer (`src/components/GeoMap.tsx`), jsPDF document suite (`src/lib/pdf.ts`: Quotations, Invoices, Packing Slips, Official Payment Receipts, Work Orders, Payment Clearance Certificates, Completion Certificates, Financial Reports).
 - **Backend:** Express (`server.ts`) serving REST APIs (`/api/*`, `/api/admin/*`), `/robots.txt`, `/sitemap.xml`, Razorpay webhook (`/api/payments/webhook`), and Vite middleware in development.
-- **Database & Schema:** PostgreSQL (Cloud SQL) managed via Drizzle ORM (`src/db/schema.ts` — 24 tables covering users, addresses, categories, products, wishlist, reviews, coupons, orders, custom 3D printing materials/machines/jobs, project enquiries, quotations, active engineering projects/milestones/deliverables, PCB enquiries, B2B bulk requests, support tickets, newsletter, blogs, case studies, site CMS settings, and admin audit logs).
-- **Authentication:** Dual Firebase Google Sign-In + HTTP-only signed session authentication (`/admin/login`) with salted `scrypt` password hashing (`src/db/users.ts`, `src/middleware/auth.ts`) and 9-role RBAC (`super_admin`, `website_manager`, `product_manager`, `sales_manager`, `project_manager`, `engineer`, `inventory_manager`, `accounts_manager`, `support_manager`, `customer`).
-- **3D Slicing Engine:** Real server-side binary/ASCII STL & OBJ mesh geometry analyzer (`src/server/slicer.ts`) calculating bounding box (`X × Y × Z`), exact mesh volume (`cm³`), surface area (`cm²`), overhang ratio, support volume estimation, layer count, filament weight, print duration, and dynamic material/printer/infill pricing. Large or STEP/3MF assemblies automatically transition to `Technical Review Required` for manual engineering estimation.
-- **Payments:** Razorpay Orders API + HMAC-SHA256 signature verification (`src/server/razorpay.ts`), with an explicitly labeled **Sandbox Test Mode** when live Razorpay credentials are not configured.
+- **Database & Schema:** PostgreSQL (Cloud SQL / fallback mock engine) managed via Drizzle ORM (`src/db/schema.ts`), including:
+  - Core WooCommerce Store, 3D Printing Lab, PCB & B2B Quotes, Blogs, Case Studies, CRM & Audit Logs
+  - **Module 1 (Project Advance/Final Payment, Clearance & Handover):** Configurable 50%/50% payment split, per-project milestones, official receipts (`NTF-RCP-`), work orders (`NTF-WRK-`), clearance certificates (`NTF-CLR-`), completion certificates (`NTF-CMP-`), time-limited token-gated deliverable downloads, courier dispatch records, Super Admin audited handover exceptions, and configurable lifecycle email templates (`src/server/email.ts`).
+  - **Module 2 (KRASHIVANTRI Farmer & Drone Pilot Operations):** Farmer KYC & polygon farm plots (`/krashivantri/farmer-portal`), DGCA Remote Pilot Certificate (RPC) verification & AES-256-GCM encrypted payout bank details (`/krashivantri/pilot-portal`), browser-authenticated live GPS telemetry with real staleness checks, geofenced spraying sessions & photo/video evidence, Razorpay booking collections & refunds, verified pilot earnings ledger & UTR-gated payouts, penalties & appeals, plus Admin operational consoles (`/admin/farmers`, `/admin/drone-pilots`, `/admin/live-tracking`, `/admin/orders/live`, `/admin/farmer-payments`, `/admin/pilot-payouts`, `/admin/penalties`, `/admin/finance`).
+  - **Drone Repair Service:** Dedicated UAV repair & field diagnostics booking portal (`/services/drone-repair`).
+- **Authentication:** Dual Firebase Google Sign-In + HTTP-only signed session authentication (`/admin/login`) with salted `scrypt` password hashing, admin password reset tokens (`src/db/users.ts`, `src/middleware/auth.ts`), and 9-role RBAC.
+- **3D Slicing Engine:** Real server-side binary/ASCII STL & OBJ mesh geometry analyzer (`src/server/slicer.ts`) calculating bounding box (`X × Y × Z`), exact mesh volume (`cm³`), surface area (`cm²`), overhang ratio, support volume estimation, layer count, filament weight, print duration, and dynamic material/printer/infill pricing.
+- **Payments:** Razorpay Orders API + HMAC-SHA256 signature verification & idempotent webhook handling (`src/server/razorpay.ts`), with an explicitly labeled **Sandbox Test Mode** when live Razorpay credentials are not configured.
 
 ---
 
@@ -46,12 +50,13 @@ Required database variables (`src/db/index.ts`):
 - `SQL_PASSWORD`
 - `SQL_DB_NAME`
 
-Optional payment & admin variables:
+Optional payment, email & admin variables:
 - `INITIAL_ADMIN_NAME`, `INITIAL_ADMIN_EMAIL`, `INITIAL_ADMIN_PASSWORD` (seeds initial password-authenticated Super Admin on startup)
 - `ADMIN_SESSION_SECRET` (HMAC secret for signed admin session cookies)
 - `RAZORPAY_KEY_ID` (leave blank to use Sandbox Test Mode)
 - `RAZORPAY_KEY_SECRET`
 - `RAZORPAY_WEBHOOK_SECRET`
+- `RESEND_API_KEY` or `EMAIL_WEBHOOK_URL` and `EMAIL_FROM` (for transactional email delivery; logs `not_configured` if omitted)
 - `ADMIN_EMAILS="info.nexustekfusion@gmail.com,info@nexustekfusion.in"`
 - `APP_URL="http://localhost:3000"`
 
@@ -64,7 +69,7 @@ npx drizzle-kit push --config=src/db/drizzle.config.ts
 ```bash
 npm run dev
 ```
-The application runs on `http://localhost:3000`. Seed data (categories, initial catalog products, printing materials, FDM/SLA machines, blogs, case studies, and company CMS defaults) initializes safely on first bootstrap request without overwriting existing edits.
+The application runs on `http://localhost:3000`. Seed data (categories, initial catalog products including KRASHIVANTRI X & X PRO with zero fabricated specifications, printing materials, FDM/SLA machines, blogs, case studies, and company CMS defaults) initializes safely on first bootstrap request without overwriting existing edits.
 
 ### 6. Build & Run Production
 ```bash
@@ -85,15 +90,12 @@ In your Razorpay Dashboard, configure a webhook pointing to:
 
 ## End-to-End Verification Checklist
 
-1. **Workflow A (Project Enquiry -> Quotation -> Payment -> Active Project):**
-   - Submit an enquiry at `/project-enquiry` with attachments and billing/delivery addresses.
-   - Sign in as Admin at `/admin`, open **Enquiries & Quotes**, build an itemized quotation, and send to customer.
-   - Open `/my-account` as the customer, inspect the quote, download PDF, accept, and complete Razorpay payment (advance or full). Verify project activation and milestone tracking.
-2. **Workflow B (Custom 3D Printing):**
-   - Upload an `.stl` or `.obj` model at `/services/3d-printing`, inspect the interactive Three.js preview, select material/color/layer height/infill, verify live slicer calculation, pick a delivery address, and place a Razorpay order.
-3. **Workflow C (Ready-Made Store & Coupons):**
-   - Browse `/shop` and `/store/3d-printed-products`, select variants/colors on `/product/[slug]`, add to `/cart`, apply a coupon at `/checkout`, verify atomic stock deduction and `/track-order` lookup.
-4. **Workflow D (PCB Design & B2B Bulk Portal):**
-   - Submit a PCB enquiry at `/services/pcb-design` or a B2B bulk quote request at `/b2b`, review and quote from `/admin`, and pay from `/my-account`.
-5. **Workflow E (Admin RBAC, CMS & Audit Logs):**
-   - Manage products, stock, printing materials/machines, coupons, CMS settings (hero, banner, company info, FAQs, legal policies), user roles, and review immutable audit trails in `/admin`.
+1. **Workflow A (Project Enquiry -> Quotation -> 50% Advance -> Final Payment -> Handover):**
+   - Submit an enquiry at `/project-enquiry`, prepare/send an itemized quotation from `/admin`, pay 50% advance in `/my-account`, verify automatic issuance of Payment Receipt, Invoice, and Work Order (`NTF-WRK-`).
+   - Mark project `Project Completed – Awaiting Final Payment`, verify deliverable vault stays locked until remaining 50% balance is paid (or Super Admin logs an audited handover exception), then acknowledge receipt to issue Payment Clearance (`NTF-CLR-`) & Completion (`NTF-CMP-`) certificates.
+2. **Workflow B (KRASHIVANTRI Farmer & Drone Pilot Operations):**
+   - Register a farmer & draw a polygon farm plot on `/krashivantri/farmer-portal`; register a drone pilot, upload DGCA RPC/drone/bank details & broadcast real browser GPS on `/krashivantri/pilot-portal`.
+   - Verify accounts in `/admin/farmers` and `/admin/drone-pilots`, book a spraying mission, dispatch a pilot in `/admin/live-tracking`, upload flight evidence, verify acres, and process UTR-verified payouts in `/admin/pilot-payouts`.
+3. **Workflow C (Custom 3D Printing & Store):**
+   - Upload an `.stl` or `.obj` model at `/services/3d-printing`, inspect the Three.js viewer, select material/infill, and checkout via Razorpay.
+   - Explore `/krashivantri`, `/product/krashivantri-x`, `/product/krashivantri-x-pro`, `/shop`, and `/services/drone-repair`.

@@ -54,6 +54,7 @@ interface PlatformContextValue {
   signInWithAdminCredentials: (email: string, password: string) => Promise<DbUser>;
   signOut: () => Promise<void>;
   apiFetch: <T = any>(url: string, options?: RequestInit) => Promise<T>;
+  getIdToken: () => Promise<string | null>;
   settings: SiteSettings;
   previewDraft: boolean;
   categories: ProductCategory[];
@@ -267,6 +268,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const isSignedIn = Boolean(fbUser || dbUser);
   const isAdmin = Boolean(dbUser && ADMIN_ROLES.has(dbUser.role));
+  const getIdToken = useCallback(async () => (auth.currentUser ? auth.currentUser.getIdToken() : null), []);
 
   return (
     <PlatformContext.Provider
@@ -282,6 +284,7 @@ export const PlatformProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         signInWithAdminCredentials,
         signOut,
         apiFetch,
+        getIdToken,
         settings,
         previewDraft,
         categories,
